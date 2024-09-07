@@ -116,9 +116,7 @@ impl<R> std::future::Future for Future<R> {
 //I think we don't want clone on either type, because it creates problems for implementing Send.
 unsafe impl<R: Send> Send for Future<R> {}
 unsafe impl <R: Send> Send for Sender<R> {}
-fn warn() {
 
-}
 /*Since no clone, no copy
 
 I think we don't want Eq/Ord/hash because we don't expect multiple instances, since no clone.
