@@ -4,7 +4,7 @@ Adds a simple continuation type to Rust
 
 
 use std::cell::UnsafeCell;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -27,54 +27,50 @@ struct Shared<R> {
     state: AtomicU8,
 }
 
+
 #[derive(Debug)]
-pub struct Continuation<R> {
+pub struct Sender<R> {
     shared: Arc<Shared<R>>,
-    //Whether a future was created.  Only one is allowed.
-    futured: bool,
 }
 
 
 
-impl<R> Continuation<R> {
-    pub fn new() -> Self {
-        let shared = Arc::new(Shared {
-            data: UnsafeCell::new(MaybeUninit::uninit()),
-            state: AtomicU8::new(State::Empty as u8),
-        });
-        Continuation { shared, futured: false }
-    }
-    pub fn resume(&mut self, data: R) {
+pub fn continuation<R>() -> (Sender<R>,Future<R>) {
+
+    let shared = Arc::new(Shared {
+        data: UnsafeCell::new(MaybeUninit::uninit()),
+        state: AtomicU8::new(State::Empty as u8),
+    });
+    (Sender { shared: shared.clone() }, Future { shared })
+}
+
+
+impl<R> Sender<R> {
+    pub fn send(self, data: R) {
         /*
         Safety: Data can only be written by this type.  Since the type is !Sync,
         it can only be written by this thread.
 
         Read is guarded by the state flag.
-         */
 
+        */
         //misuse check
         let state = self.shared.state.load(Ordering::Acquire);
-
         match state {
             u if u == State::Empty as u8 => {}
             u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")},
             _ => unreachable!("Invalid state"),
         }
-
         unsafe {
             let opt = &mut *self.shared.data.get();
             std::ptr::write(opt.as_mut_ptr(), data);
         }
         self.shared.state.store(State::Data as u8, Ordering::Release);
     }
-    pub fn future(&mut self) -> Future<R> {
-        assert!(!self.futured, "Only one future allowed");
-        self.futured = true;
-        Future {
-            shared: self.shared.clone(),
-        }
-    }
 }
+
+
+
 
 
 
@@ -82,11 +78,6 @@ impl<R> Continuation<R> {
 #[derive(Debug)]
 pub struct Future<R> {
     shared: Arc<Shared<R>>,
-}
-impl<R> Future<R> {
-    pub fn new(continuation: &mut Continuation<R>) -> Self {
-        continuation.future()
-    }
 }
 
 impl<R> std::future::Future for Future<R> {
@@ -123,56 +114,39 @@ impl<R> std::future::Future for Future<R> {
 //tedious traits
 
 //I think we don't want clone on either type, because it creates problems for implementing Send.
-unsafe impl<R> Send for Future<R> {}
-unsafe impl <R> Send for Continuation<R> {}
+unsafe impl<R: Send> Send for Future<R> {}
+unsafe impl <R: Send> Send for Sender<R> {}
+fn warn() {
 
+}
 /*Since no clone, no copy
 
 I think we don't want Eq/Ord/hash because we don't expect multiple instances, since no clone.
 
-Trivial default implementation:
+Default does not make a lot of sense because we generate types as a pair.
  */
 
-impl <R: Default> Default for Continuation<R> {
-    fn default() -> Self {
-        Continuation::new()
-    }
-}
 
-//derive display.  Note that we can't necessarily read the data here because we have &, not &mut.
-impl<R> Display for Continuation<R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Continuation<{}>", std::any::type_name::<R>())
-    }
-}
 
-impl<R> Display for Future<R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Future<{}>", std::any::type_name::<R>())
-    }
-}
-
-//we can get future from continuation, although not the other way around I think
-
-impl<R> From<&mut Continuation<R>> for Future<R> {
-    fn from(c: &mut Continuation<R>) -> Self {
-        c.future()
-    }
-}
 
 #[cfg(test)]
 mod test {
     use std::pin::Pin;
     use std::task::Poll;
-    use crate::Continuation;
+    use crate::continuation;
 
     #[test]
     fn test_continue() {
-        let mut c = Continuation::new();
-        let mut f = c.future();
+        let(c,mut f) = continuation();
         let mut f = Pin::new(&mut f);
         assert_eq!(truntime::poll_once(f.as_mut()), Poll::Pending);
-        c.resume(23);
+        c.send(23);
         assert_eq!(truntime::poll_once(f), Poll::Ready(23));
+    }
+
+    #[test] fn test_is_send() {
+        fn is_send<T: Send>() {}
+        is_send::<crate::Future<i32>>();
+        is_send::<crate::Sender<i32>>();
     }
 }
