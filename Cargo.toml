@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 atomic-waker = "*"
-
+thiserror = "*"
 [dev-dependencies]
 truntime = {git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/truntime.git"}

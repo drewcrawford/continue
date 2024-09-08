@@ -15,7 +15,15 @@ enum State {
     Empty,
     Data,
     Gone,
+    Hangup,
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum Err {
+    #[error("The continuation was hung up")]
+    Hangup,
+}
+
 
 
 
@@ -47,7 +55,20 @@ pub fn continuation<R>() -> (Sender<R>,Future<R>) {
 
 
 impl<R> Sender<R> {
-    pub fn send(self, data: R) {
+    /**
+    Sends the data to the remote side.
+
+    Note that there is no particular guarantee that the remote side will receive this.  For example,
+    the remote side may be dropped already, in which case sending has no effect.  Alternatively, the remote
+    side may become dropped after sending.
+
+    If you have a particularly good way of handling this, you may want to check [is_cancelled] before sending.
+    Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
+
+
+
+*/
+    pub fn send(self, data: R)  {
         /*
         Safety: Data can only be written by this type.  Since the type is !Sync,
         it can only be written by this thread.
@@ -60,6 +81,10 @@ impl<R> Sender<R> {
         match state {
             u if u == State::Empty as u8 => {}
             u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")},
+            u if u == State::Hangup as u8 => {
+                //sending to a hungup continuation is a no-op
+                return;
+            },
             _ => unreachable!("Invalid state"),
         }
         unsafe {
@@ -67,6 +92,27 @@ impl<R> Sender<R> {
             std::ptr::write(opt.as_mut_ptr(), data);
         }
         self.shared.state.store(State::Data as u8, Ordering::Release);
+    }
+}
+
+impl<R> Drop for Sender<R> {
+    fn drop(&mut self) {
+        let state = self.shared.state.load(Ordering::Relaxed);
+        match state {
+            u if u == State::Empty as u8 => {
+                self.shared.state.store(State::Hangup as u8, Ordering::Relaxed);
+            }
+            u if u == State::Data as u8 => {
+                //do nothing
+            }
+            u if u == State::Gone as u8 => {
+                //do nothing
+            }
+            u if u == State::Hangup as u8 => {
+                //do nothing
+            }
+            _ => unreachable!("Invalid state"),
+        }
     }
 }
 
@@ -81,11 +127,17 @@ pub struct Future<R> {
     shared: Arc<Shared<R>>,
 }
 
+enum ReadStatus<R> {
+    Data(R),
+    Waiting,
+    Hangup
+}
+
 impl<R> Future<R> {
-    fn read_if_available(&self) -> Option<R> {
+    fn read_if_available(&self) -> ReadStatus<R> {
         let state = self.shared.state.load(Ordering::Acquire);
         match state {
-            u if u == State::Empty as u8 => {None}
+            u if u == State::Empty as u8 => {ReadStatus::Waiting}
             u if u == State::Data as u8 => {
                 let val = unsafe {
                     //safety: We know that the continuation has been resumed, so we can read the data
@@ -101,8 +153,9 @@ impl<R> Future<R> {
                     self.shared.state.store(State::Gone as u8, Ordering::Relaxed);
                     r
                 };
-                Some(val)
+                ReadStatus::Data(val)
             }
+            u if u == State::Hangup as u8 => {ReadStatus::Hangup}
             u if u == State::Gone as u8 => {panic!("Continuation already polled")}
             _ => unreachable!("Invalid state"),
         }
@@ -112,20 +165,21 @@ impl<R> Future<R> {
 
 
 impl<R> std::future::Future for Future<R> {
-    type Output = R;
+    type Output = Result<R,Err>;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         //optimistic read.
-        if let Some(data) = self.read_if_available() {
-            return Poll::Ready(data);
+        match self.read_if_available() {
+            ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
+            ReadStatus::Waiting => {}
+            ReadStatus::Hangup => {return Poll::Ready(Err(Err::Hangup))}
         }
         //register for wakeup
         self.shared.waker.register(cx.waker());
         //recheck
-        if let Some(data) = self.read_if_available() {
-            Poll::Ready(data)
-        }
-        else {
-            Poll::Pending
+        match self.read_if_available() {
+            ReadStatus::Data(data) => {Poll::Ready(Ok(data))}
+            ReadStatus::Waiting => {Poll::Pending}
+            ReadStatus::Hangup => {Poll::Ready(Err(Err::Hangup))}
         }
     }
 }
@@ -156,9 +210,12 @@ mod test {
     fn test_continue() {
         let(c,mut f) = continuation();
         let mut f = Pin::new(&mut f);
-        assert_eq!(truntime::poll_once(f.as_mut()), Poll::Pending);
+        assert!(truntime::poll_once(f.as_mut()).is_pending());
         c.send(23);
-        assert_eq!(truntime::poll_once(f), Poll::Ready(23));
+        match truntime::poll_once(f) {
+            Poll::Ready(Ok(23)) => {}
+            x => panic!("Unexpected result {:?}",x),
+        }
     }
 
     #[test] fn test_is_send() {
