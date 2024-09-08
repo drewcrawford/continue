@@ -11,7 +11,6 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::task::Poll;
 
 #[repr(u8)]
-
 enum State {
     Empty,
     Data,
@@ -25,6 +24,7 @@ enum State {
 struct Shared<R> {
     data: UnsafeCell<MaybeUninit<R>>,
     state: AtomicU8,
+    waker: atomic_waker::AtomicWaker,
 }
 
 
@@ -40,6 +40,7 @@ pub fn continuation<R>() -> (Sender<R>,Future<R>) {
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
+        waker: atomic_waker::AtomicWaker::new(),
     });
     (Sender { shared: shared.clone() }, Future { shared })
 }
@@ -80,13 +81,11 @@ pub struct Future<R> {
     shared: Arc<Shared<R>>,
 }
 
-impl<R> std::future::Future for Future<R> {
-    type Output = R;
-    fn poll(self: std::pin::Pin<&mut Self>, _: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let load = self.shared.state.load(Ordering::Acquire);
-        match load {
-            u if u == State::Empty as u8 => {return Poll::Pending}
-            u if u == State::Gone as u8 => {panic!("Continuation already polled")}
+impl<R> Future<R> {
+    fn read_if_available(&self) -> Option<R> {
+        let state = self.shared.state.load(Ordering::Acquire);
+        match state {
+            u if u == State::Empty as u8 => {None}
             u if u == State::Data as u8 => {
                 let val = unsafe {
                     //safety: We know that the continuation has been resumed, so we can read the data
@@ -102,11 +101,31 @@ impl<R> std::future::Future for Future<R> {
                     self.shared.state.store(State::Gone as u8, Ordering::Relaxed);
                     r
                 };
-                Poll::Ready(val)
+                Some(val)
             }
-
+            u if u == State::Gone as u8 => {panic!("Continuation already polled")}
             _ => unreachable!("Invalid state"),
+        }
+    }
+}
 
+
+
+impl<R> std::future::Future for Future<R> {
+    type Output = R;
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        //optimistic read.
+        if let Some(data) = self.read_if_available() {
+            return Poll::Ready(data);
+        }
+        //register for wakeup
+        self.shared.waker.register(cx.waker());
+        //recheck
+        if let Some(data) = self.read_if_available() {
+            Poll::Ready(data)
+        }
+        else {
+            Poll::Pending
         }
     }
 }
