@@ -19,7 +19,7 @@ enum State {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum Err {
+pub enum Error {
     #[error("The continuation was hung up")]
     Hangup,
 }
@@ -93,6 +93,13 @@ impl<R> Sender<R> {
         }
         self.shared.state.store(State::Data as u8, Ordering::Release);
     }
+
+    /**
+    Determines if the underlying future is cancelled.  And thus, that sending data will have no effect.
+    */
+    pub fn is_cancelled(&self) -> bool {
+        self.shared.state.load(Ordering::Relaxed) == State::Hangup as u8
+    }
 }
 
 impl<R> Drop for Sender<R> {
@@ -125,6 +132,12 @@ impl<R> Drop for Sender<R> {
 #[derive(Debug)]
 pub struct Future<R> {
     shared: Arc<Shared<R>>,
+}
+
+impl<R> Drop for Future<R> {
+    fn drop(&mut self) {
+        self.shared.state.store(State::Hangup as u8, Ordering::Relaxed);
+    }
 }
 
 enum ReadStatus<R> {
@@ -165,13 +178,13 @@ impl<R> Future<R> {
 
 
 impl<R> std::future::Future for Future<R> {
-    type Output = Result<R,Err>;
+    type Output = Result<R,Error>;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         //optimistic read.
         match self.read_if_available() {
             ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
             ReadStatus::Waiting => {}
-            ReadStatus::Hangup => {return Poll::Ready(Err(Err::Hangup))}
+            ReadStatus::Hangup => {return Poll::Ready(Err(Error::Hangup))}
         }
         //register for wakeup
         self.shared.waker.register(cx.waker());
@@ -179,7 +192,7 @@ impl<R> std::future::Future for Future<R> {
         match self.read_if_available() {
             ReadStatus::Data(data) => {Poll::Ready(Ok(data))}
             ReadStatus::Waiting => {Poll::Pending}
-            ReadStatus::Hangup => {Poll::Ready(Err(Err::Hangup))}
+            ReadStatus::Hangup => {Poll::Ready(Err(Error::Hangup))}
         }
     }
 }
@@ -222,5 +235,15 @@ mod test {
         fn is_send<T: Send>() {}
         is_send::<crate::Future<i32>>();
         is_send::<crate::Sender<i32>>();
+    }
+
+    #[test] fn test_sender_hangup() {
+        let(c,mut f) = continuation::<i32>();
+        let mut f = Pin::new(&mut f);
+        drop(c);
+        match truntime::poll_once(f) {
+            Poll::Ready(Err(crate::Error::Hangup)) => {}
+            x => panic!("Unexpected result {:?}",x),
+        }
     }
 }
