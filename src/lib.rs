@@ -15,9 +15,11 @@ enum State {
     Empty,
     Data,
     Gone,
-    Hangup,
+    SenderHangup,
+    FutureHangup,
 }
 
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("The continuation was hung up")]
@@ -77,28 +79,57 @@ impl<R> Sender<R> {
 
         */
         //misuse check
-        let state = self.shared.state.load(Ordering::Acquire);
+        let state = self.shared.state.load(Ordering::Relaxed);
         match state {
             u if u == State::Empty as u8 => {}
             u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")},
-            u if u == State::Hangup as u8 => {
+            u if u == State::FutureHangup as u8 => {
                 //sending to a hungup continuation is a no-op
                 return;
             },
+            //sender hangup is impossible
             _ => unreachable!("Invalid state"),
         }
         unsafe {
             let opt = &mut *self.shared.data.get();
             std::ptr::write(opt.as_mut_ptr(), data);
         }
-        self.shared.state.store(State::Data as u8, Ordering::Release);
+        loop {
+            let swap = self.shared.state.compare_exchange_weak(State::Empty as u8, State::Data as u8, Ordering::Release, Ordering::Relaxed);
+            match swap {
+                Ok(_) => {
+                    self.shared.waker.wake();
+                    return
+                }
+                Err(u) => {
+                    match u {
+                        u if u == State::Empty as u8 => {/* spurious, go around again */}
+                        u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")}
+                        u if u == State::FutureHangup as u8 => {
+                            //sending to a hungup continuation is a no-op
+                            //however, we did write our data, so we need to drop it.
+                            unsafe {
+                                //safety: We know that the continuation has been resumed, so we can read the data
+                                let data = &mut *self.shared.data.get();
+                                //safety: we know the data was initialized and will never be written to again (only
+                                //written to in empty state.
+                                let _ = data.assume_init_read();
+                            }
+                        }
+                        //sender hangup is impossible
+                        _ => unreachable!("Invalid state"),
+                    }
+                }
+            }
+        }
+
     }
 
     /**
     Determines if the underlying future is cancelled.  And thus, that sending data will have no effect.
     */
     pub fn is_cancelled(&self) -> bool {
-        self.shared.state.load(Ordering::Relaxed) == State::Hangup as u8
+        self.shared.state.load(Ordering::Relaxed) == State::FutureHangup as u8
     }
 }
 
@@ -107,7 +138,7 @@ impl<R> Drop for Sender<R> {
         let state = self.shared.state.load(Ordering::Relaxed);
         match state {
             u if u == State::Empty as u8 => {
-                self.shared.state.store(State::Hangup as u8, Ordering::Relaxed);
+                self.shared.state.store(State::SenderHangup as u8, Ordering::Relaxed);
             }
             u if u == State::Data as u8 => {
                 //do nothing
@@ -115,9 +146,10 @@ impl<R> Drop for Sender<R> {
             u if u == State::Gone as u8 => {
                 //do nothing
             }
-            u if u == State::Hangup as u8 => {
+            u if u == State::FutureHangup as u8 => {
                 //do nothing
             }
+            //senderhangup is impossible; it's us!
             _ => unreachable!("Invalid state"),
         }
     }
@@ -136,25 +168,40 @@ pub struct Future<R> {
 
 impl<R> Drop for Future<R> {
     fn drop(&mut self) {
-        self.shared.state.store(State::Hangup as u8, Ordering::Relaxed);
+        let swap = self.shared.state.swap(State::FutureHangup as u8, Ordering::Acquire);
+        match swap {
+            u if u == State::Empty as u8 => {}
+            u if u == State::Data as u8 => {
+                //data needs to be dropped here
+                unsafe {
+                    //safety: We know that the continuation has been resumed, so we can read the data
+                    let data = &mut *self.shared.data.get();
+                    //safety: we know the data was initialized and will never be written to again (only
+                    //written to in empty state.
+                    let _ = data.assume_init_read();
+                }
+            }
+            u if u == State::Gone as u8 => {}
+            u if u == State::SenderHangup as u8 => {}
+            _ => unreachable!("Invalid state"),
+        }
     }
 }
 
 enum ReadStatus<R> {
     Data(R),
     Waiting,
+    Spurious,
     Hangup
 }
 
 impl<R> Future<R> {
-    fn read_if_available(&self) -> ReadStatus<R> {
-        let state = self.shared.state.load(Ordering::Acquire);
-        match state {
-            u if u == State::Empty as u8 => {ReadStatus::Waiting}
-            u if u == State::Data as u8 => {
-                let val = unsafe {
+    fn interpret_result(result: Result<u8, u8>, data: &UnsafeCell<MaybeUninit<R>>) -> ReadStatus<R> {
+        match result {
+            Ok(..) => {
+                unsafe {
                     //safety: We know that the continuation has been resumed, so we can read the data
-                    let data = &mut *self.shared.data.get();
+                    let data = &mut *data.get();
                     /*safety: we know the data was initialized and will never be written to again (only
                     written to in empty state.
 
@@ -162,15 +209,19 @@ impl<R> Future<R> {
                     It can only be polled exclusively in this function since we have &mut self.
                      */
                     let r = data.assume_init_read();
-                    //and will never be read again because
-                    self.shared.state.store(State::Gone as u8, Ordering::Relaxed);
-                    r
-                };
-                ReadStatus::Data(val)
+                    return ReadStatus::Data(r);
+                }
             }
-            u if u == State::Hangup as u8 => {ReadStatus::Hangup}
-            u if u == State::Gone as u8 => {panic!("Continuation already polled")}
-            _ => unreachable!("Invalid state"),
+            Err(u) => {
+                match u {
+                    u if u == State::Empty as u8 => { return ReadStatus::Waiting }
+                    u if u == State::Data as u8 => { return ReadStatus::Spurious }
+                    u if u == State::SenderHangup as u8 => { return ReadStatus::Hangup }
+                    u if u == State::Gone as u8 => { panic!("Continuation already polled") }
+                    //future hangup is impossible
+                    _ => { unreachable!("Invalid state") }
+                }
+            }
         }
     }
 }
@@ -181,18 +232,23 @@ impl<R> std::future::Future for Future<R> {
     type Output = Result<R,Error>;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         //optimistic read.
-        match self.read_if_available() {
+        let state = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
+        match Self::interpret_result(state, &self.shared.data) {
             ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
             ReadStatus::Waiting => {}
             ReadStatus::Hangup => {return Poll::Ready(Err(Error::Hangup))}
+            ReadStatus::Spurious => {}
         }
         //register for wakeup
         self.shared.waker.register(cx.waker());
-        //recheck
-        match self.read_if_available() {
-            ReadStatus::Data(data) => {Poll::Ready(Ok(data))}
-            ReadStatus::Waiting => {Poll::Pending}
-            ReadStatus::Hangup => {Poll::Ready(Err(Error::Hangup))}
+        loop {
+            let state2 = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
+            match Self::interpret_result(state2, &self.shared.data) {
+                ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
+                ReadStatus::Waiting => {return Poll::Pending}
+                ReadStatus::Hangup => {return Poll::Ready(Err(Error::Hangup))}
+                ReadStatus::Spurious => {continue}
+            }
         }
     }
 }
@@ -239,7 +295,7 @@ mod test {
 
     #[test] fn test_sender_hangup() {
         let(c,mut f) = continuation::<i32>();
-        let mut f = Pin::new(&mut f);
+        let f = Pin::new(&mut f);
         drop(c);
         match truntime::poll_once(f) {
             Poll::Ready(Err(crate::Error::Hangup)) => {}
