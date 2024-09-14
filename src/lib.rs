@@ -137,7 +137,6 @@ impl<R> Sender<R> {
 
 impl<R> Drop for Sender<R> {
     fn drop(&mut self) {
-        let state = self.shared.state.load(Ordering::Relaxed);
         assert!(self.sent, "Sender dropped without sending data");
     }
 }
