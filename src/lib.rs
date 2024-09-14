@@ -18,12 +18,6 @@ enum State {
     FutureHangup,
 }
 
-#[non_exhaustive]
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("The continuation was hung up")]
-    Hangup,
-}
 
 
 
@@ -177,7 +171,6 @@ enum ReadStatus<R> {
     Data(R),
     Waiting,
     Spurious,
-    Hangup
 }
 
 impl<R> Future<R> {
@@ -202,7 +195,6 @@ impl<R> Future<R> {
                     u if u == State::Empty as u8 => { return ReadStatus::Waiting }
                     u if u == State::Data as u8 => { return ReadStatus::Spurious }
                     u if u == State::Gone as u8 => { panic!("Continuation already polled") }
-                    //future hangup is impossible
                     _ => { unreachable!("Invalid state") }
                 }
             }
@@ -213,14 +205,13 @@ impl<R> Future<R> {
 
 
 impl<R> std::future::Future for Future<R> {
-    type Output = Result<R,Error>;
+    type Output = R;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         //optimistic read.
         let state = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
         match Self::interpret_result(state, &self.shared.data) {
-            ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
+            ReadStatus::Data(data) => {return Poll::Ready(data)}
             ReadStatus::Waiting => {}
-            ReadStatus::Hangup => {return Poll::Ready(Err(Error::Hangup))}
             ReadStatus::Spurious => {}
         }
         //register for wakeup
@@ -228,9 +219,8 @@ impl<R> std::future::Future for Future<R> {
         loop {
             let state2 = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
             match Self::interpret_result(state2, &self.shared.data) {
-                ReadStatus::Data(data) => {return Poll::Ready(Ok(data))}
+                ReadStatus::Data(data) => {return Poll::Ready(data)}
                 ReadStatus::Waiting => {return Poll::Pending}
-                ReadStatus::Hangup => {return Poll::Ready(Err(Error::Hangup))}
                 ReadStatus::Spurious => {continue}
             }
         }
@@ -266,7 +256,7 @@ mod test {
         assert!(truntime::poll_once(f.as_mut()).is_pending());
         c.send(23);
         match truntime::poll_once(f) {
-            Poll::Ready(Ok(23)) => {}
+            Poll::Ready(23) => {}
             x => panic!("Unexpected result {:?}",x),
         }
     }
@@ -277,13 +267,5 @@ mod test {
         is_send::<crate::Sender<i32>>();
     }
 
-    #[test] fn test_sender_hangup() {
-        let(c,mut f) = continuation::<i32>();
-        let f = Pin::new(&mut f);
-        drop(c);
-        match truntime::poll_once(f) {
-            Poll::Ready(Err(crate::Error::Hangup)) => {}
-            x => panic!("Unexpected result {:?}",x),
-        }
-    }
+
 }
