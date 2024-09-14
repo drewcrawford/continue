@@ -15,7 +15,6 @@ enum State {
     Empty,
     Data,
     Gone,
-    SenderHangup,
     FutureHangup,
 }
 
@@ -41,6 +40,7 @@ struct Shared<R> {
 #[derive(Debug)]
 pub struct Sender<R> {
     shared: Arc<Shared<R>>,
+    sent: bool,
 }
 
 
@@ -52,7 +52,7 @@ pub fn continuation<R>() -> (Sender<R>,Future<R>) {
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
     });
-    (Sender { shared: shared.clone() }, Future { shared })
+    (Sender { shared: shared.clone(), sent: false }, Future { shared })
 }
 
 
@@ -70,7 +70,9 @@ impl<R> Sender<R> {
 
 
 */
-    pub fn send(self, data: R)  {
+    pub fn send(mut self, data: R)  {
+        self.sent = true;
+
         /*
         Safety: Data can only be written by this type.  Since the type is !Sync,
         it can only be written by this thread.
@@ -136,22 +138,7 @@ impl<R> Sender<R> {
 impl<R> Drop for Sender<R> {
     fn drop(&mut self) {
         let state = self.shared.state.load(Ordering::Relaxed);
-        match state {
-            u if u == State::Empty as u8 => {
-                self.shared.state.store(State::SenderHangup as u8, Ordering::Relaxed);
-            }
-            u if u == State::Data as u8 => {
-                //do nothing
-            }
-            u if u == State::Gone as u8 => {
-                //do nothing
-            }
-            u if u == State::FutureHangup as u8 => {
-                //do nothing
-            }
-            //senderhangup is impossible; it's us!
-            _ => unreachable!("Invalid state"),
-        }
+        assert!(self.sent, "Sender dropped without sending data");
     }
 }
 
@@ -182,7 +169,6 @@ impl<R> Drop for Future<R> {
                 }
             }
             u if u == State::Gone as u8 => {}
-            u if u == State::SenderHangup as u8 => {}
             _ => unreachable!("Invalid state"),
         }
     }
@@ -216,7 +202,6 @@ impl<R> Future<R> {
                 match u {
                     u if u == State::Empty as u8 => { return ReadStatus::Waiting }
                     u if u == State::Data as u8 => { return ReadStatus::Spurious }
-                    u if u == State::SenderHangup as u8 => { return ReadStatus::Hangup }
                     u if u == State::Gone as u8 => { panic!("Continuation already polled") }
                     //future hangup is impossible
                     _ => { unreachable!("Invalid state") }
