@@ -5,10 +5,11 @@ Adds a simple continuation type to Rust
 
 use std::cell::UnsafeCell;
 use std::fmt::{Debug};
-use std::mem::MaybeUninit;
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::task::Poll;
+use std::task::{Context, Poll};
 
 #[repr(u8)]
 enum State {
@@ -17,11 +18,6 @@ enum State {
     Gone,
     FutureHangup,
 }
-
-
-
-
-
 
 #[derive(Debug)]
 struct Shared<R> {
@@ -37,10 +33,24 @@ pub struct Sender<R> {
     sent: bool,
 }
 
+#[derive(Debug)]
+pub struct FutureCancel<R,C: FutureCancellation> {
+    future: ManuallyDrop<Future<R>>,
+    cancellation: C,
+}
 
+pub trait FutureCancellation {
+    fn cancel(&mut self);
+}
+
+
+/**
+Creates a new continuation.
+
+If you need to provide a custom cancel implementation, use [continuation_cancel] instead.
+*/
 
 pub fn continuation<R>() -> (Sender<R>,Future<R>) {
-
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
@@ -48,6 +58,24 @@ pub fn continuation<R>() -> (Sender<R>,Future<R>) {
     });
     (Sender { shared: shared.clone(), sent: false }, Future { shared })
 }
+
+/**
+Creates a new continuation.  Allows for a custom cancel implementation.
+
+# Parameters
+- `cancellation` - The cancellation implementation to use.  You can use the [crate::FutureCancellation] trait to react to cancel events, or Drop to react to drop events
+(regardless of whether the future is cancelled).
+*/
+pub fn continuation_cancel<R,C: FutureCancellation>(cancellation: C) -> (Sender<R>,FutureCancel<R,C>) {
+    let shared = Arc::new(Shared {
+        data: UnsafeCell::new(MaybeUninit::uninit()),
+        state: AtomicU8::new(State::Empty as u8),
+        waker: atomic_waker::AtomicWaker::new(),
+    });
+    (Sender { shared: shared.clone(), sent: false }, FutureCancel { future: ManuallyDrop::new(Future { shared }), cancellation })
+}
+
+
 
 
 impl<R> Sender<R> {
@@ -58,11 +86,8 @@ impl<R> Sender<R> {
     the remote side may be dropped already, in which case sending has no effect.  Alternatively, the remote
     side may become dropped after sending.
 
-    If you have a particularly good way of handling this, you may want to check [is_cancelled] before sending.
+    If you have a particularly good way of handling this, you may want to check [is_cancelled] to avoid doing unnecessary work.
     Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
-
-
-
 */
     pub fn send(mut self, data: R)  {
         self.sent = true;
@@ -114,6 +139,7 @@ impl<R> Sender<R> {
     pub fn is_cancelled(&self) -> bool {
         self.shared.state.load(Ordering::Relaxed) == State::FutureHangup as u8
     }
+
 }
 
 impl<R> Drop for Sender<R> {
@@ -122,22 +148,29 @@ impl<R> Drop for Sender<R> {
     }
 }
 
-
-
-
-
-
-
 #[derive(Debug)]
 pub struct Future<R> {
     shared: Arc<Shared<R>>,
 }
 
-impl<R> Drop for Future<R> {
-    fn drop(&mut self) {
+enum DropState {
+    Cancelled,
+    NotCancelled,
+}
+impl<R> Future<R> {
+    /**implementation detail of drop.
+
+    # Returns
+    a value indicating whether, at the time the function ran, the future is dropped before receiving data.
+
+    Note that this is not a guarantee that at any future time – including immediately after this function returns – the data will not be sent.
+    */
+    fn drop_impl(&mut self) -> DropState {
         let swap = self.shared.state.swap(State::FutureHangup as u8, Ordering::Acquire);
         match swap {
-            u if u == State::Empty as u8 => {}
+            u if u == State::Empty as u8 => {
+                DropState::Cancelled
+            }
             u if u == State::Data as u8 => {
                 //data needs to be dropped here
                 unsafe {
@@ -147,10 +180,34 @@ impl<R> Drop for Future<R> {
                     //written to in empty state.
                     let _ = data.assume_init_read();
                 }
+                DropState::NotCancelled
             }
-            u if u == State::Gone as u8 => {}
+            u if u == State::Gone as u8 => {
+                DropState::NotCancelled
+            }
             _ => unreachable!("Invalid state"),
         }
+    }
+}
+
+impl<R> Drop for Future<R> {
+    fn drop(&mut self) {
+        self.drop_impl();
+    }
+}
+
+impl<R,C: FutureCancellation> Drop for FutureCancel<R,C> {
+    fn drop(&mut self) {
+        //kill future first
+        let mut future = unsafe{ManuallyDrop::take(&mut self.future)};
+        match future.drop_impl() {
+            DropState::Cancelled => {
+                self.cancellation.cancel();
+            }
+            DropState::NotCancelled => {}
+        }
+        //don't run drop - we already ran drop_impl
+        std::mem::forget(future);
     }
 }
 
@@ -213,10 +270,20 @@ impl<R> std::future::Future for Future<R> {
     }
 }
 
+impl<R,C: FutureCancellation> std::future::Future for FutureCancel<R,C> {
+    type Output = R;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        //nothing is unpinned here
+       unsafe{self.map_unchecked_mut(|s| &mut s.future as &mut Future<R> )}.poll(cx)
+    }
+}
+
 //tedious traits
 
 //I think we don't want clone on either type, because it creates problems for implementing Send.
 unsafe impl<R: Send> Send for Future<R> {}
+unsafe impl<R: Send, C: Send + FutureCancellation> Send for FutureCancel<R,C> {}
 unsafe impl <R: Send> Send for Sender<R> {}
 
 /*Since no clone, no copy
