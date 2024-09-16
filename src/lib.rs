@@ -68,27 +68,14 @@ impl<R> Sender<R> {
         self.sent = true;
 
         /*
-        Safety: Data can only be written by this type.  Since the type is !Sync,
-        it can only be written by this thread.
+        Safety: Data can only be written by this type. Since the type is unclonable, we're
+        the only possible writer.
 
-        Read is guarded by the state flag.
-
+        It should be ok to write by default.
         */
-        //misuse check
-        let state = self.shared.state.load(Ordering::Relaxed);
-        match state {
-            u if u == State::Empty as u8 => {}
-            u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")},
-            u if u == State::FutureHangup as u8 => {
-                //sending to a hungup continuation is a no-op
-                return;
-            },
-            //sender hangup is impossible
-            _ => unreachable!("Invalid state"),
-        }
         unsafe {
             let opt = &mut *self.shared.data.get();
-            std::ptr::write(opt.as_mut_ptr(), data);
+            std::ptr::write(opt.as_mut_ptr(), data); //data is moved here!
         }
         loop {
             let swap = self.shared.state.compare_exchange_weak(State::Empty as u8, State::Data as u8, Ordering::Release, Ordering::Relaxed);
@@ -100,7 +87,7 @@ impl<R> Sender<R> {
                 Err(u) => {
                     match u {
                         u if u == State::Empty as u8 => {/* spurious, go around again */}
-                        u if u == State::Data as u8 || u == State::Gone as u8 => {panic!("Continuation already resumed")}
+                        u if u == State::Data as u8 || u == State::Gone as u8 => {unreachable!("Continuation already resumed")}
                         u if u == State::FutureHangup as u8 => {
                             //sending to a hungup continuation is a no-op
                             //however, we did write our data, so we need to drop it.
@@ -187,13 +174,13 @@ impl<R> Future<R> {
                     It can only be polled exclusively in this function since we have &mut self.
                      */
                     let r = data.assume_init_read();
-                    return ReadStatus::Data(r);
+                    ReadStatus::Data(r)
                 }
             }
             Err(u) => {
                 match u {
-                    u if u == State::Empty as u8 => { return ReadStatus::Waiting }
-                    u if u == State::Data as u8 => { return ReadStatus::Spurious }
+                    u if u == State::Empty as u8 => { ReadStatus::Waiting }
+                    u if u == State::Data as u8 => { ReadStatus::Spurious }
                     u if u == State::Gone as u8 => { panic!("Continuation already polled") }
                     _ => { unreachable!("Invalid state") }
                 }
@@ -211,8 +198,7 @@ impl<R> std::future::Future for Future<R> {
         let state = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
         match Self::interpret_result(state, &self.shared.data) {
             ReadStatus::Data(data) => {return Poll::Ready(data)}
-            ReadStatus::Waiting => {}
-            ReadStatus::Spurious => {}
+            ReadStatus::Waiting | ReadStatus::Spurious => {}
         }
         //register for wakeup
         self.shared.waker.register(cx.waker());
