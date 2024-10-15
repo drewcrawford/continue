@@ -1,5 +1,34 @@
 /*!
-Adds a simple continuation type to Rust
+# continue
+
+![logo](art/logo.png)
+
+continue is a Rust implementation of a Swift-style continuation API.
+
+# For those more familiar with Rust
+
+A continuation is a type of single-use channel.  The sender side of the channel sends a value.  The receiver of the channel is a `Future`, that `Output`s said value.  (It is a programmer error to drop a sender before sending).
+
+A common usecase for the continuation type is when you need to implement a custom Future based on being signaled by an external source when the `Future` is complete.
+
+# For those more familiar with Swift
+
+continue is the answer to how to do [`withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(isolation:function:_:)), [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation), and related APIs when in Rust.
+
+# For those entirely *too* familiar with Rust
+
+You may well ask: why use this?  I can 'simply' write my output into the future's memory, signal the waker, and be done with it.
+
+Not quite.  First, because wakers implicitly have a short lifetime (until the next poll, e.g. you must re-register wakers on each poll), you need some way to
+smuggle this value across threads.  The usual hammer for this nail is [`atomic-waker`](https://crates.io/crates/atomic-waker), which it will not surprise you to learn is a dependency.
+
+Secondly Drop is surprisingly hard.  In Rust, the Future side can be dropped early.  In which case: a) are you writing to a sound memory location, b) will you `Drop` the right number of times, c) Did you want to run some code on Drop to cancel in-flight tasks, d) Did you want to optimistically poll the cancellation state and how will you smuggle it across, etc.
+
+Thirdly, executors are surprisingly hard.  It would be *sound* for an executor to keep polling you forever after it has a result, is your implementation sound in that case? Across `Drop` and `!Clone` types?
+
+I found myself making too many mistakes, in too many places, and so I've decided to make them all in one place: right here!
+
+
 */
 
 
@@ -27,12 +56,20 @@ struct Shared<R> {
 }
 
 
+/**
+The Sender-side of the continuation.
+
+It is a programmer error (panic) to drop this type without sending a value.
+*/
 #[derive(Debug)]
 pub struct Sender<R> {
     shared: Arc<Shared<R>>,
     sent: bool,
 }
 
+/**
+The receive side of a continuation, with cancellation support.
+*/
 #[derive(Debug)]
 pub struct FutureCancel<R,C: FutureCancellation> {
     future: ManuallyDrop<Future<R>>,
@@ -86,7 +123,7 @@ impl<R> Sender<R> {
     the remote side may be dropped already, in which case sending has no effect.  Alternatively, the remote
     side may become dropped after sending.
 
-    If you have a particularly good way of handling this, you may want to check [is_cancelled] to avoid doing unnecessary work.
+    If you have a particularly good way of handling this, you may want to check [Self::is_cancelled] to avoid doing unnecessary work.
     Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
 */
     pub fn send(mut self, data: R)  {
@@ -135,6 +172,8 @@ impl<R> Sender<R> {
 
     /**
     Determines if the underlying future is cancelled.  And thus, that sending data will have no effect.
+
+    Even if this function returns `false`, it is possible that by the time you send data, the future will be cancelled.
     */
     pub fn is_cancelled(&self) -> bool {
         self.shared.state.load(Ordering::Relaxed) == State::FutureHangup as u8
@@ -148,6 +187,11 @@ impl<R> Drop for Sender<R> {
     }
 }
 
+/**
+The receive side of the continuation, without cancellation support.
+
+See also: [FutureCancel]
+*/
 #[derive(Debug)]
 pub struct Future<R> {
     shared: Arc<Shared<R>>,
