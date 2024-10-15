@@ -1,5 +1,5 @@
 [package]
-name = "continuation"
+name = "continue"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,4 @@ edition = "2021"
 atomic-waker = "*"
 thiserror = "*"
 [dev-dependencies]
-truntime = {git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/truntime.git"}
+test_executors = "~0"

@@ -22,7 +22,7 @@ You may well ask: why use this?  I can 'simply' write my output into the future'
 Not quite.  First, because wakers implicitly have a short lifetime (until the next poll, e.g. you must re-register wakers on each poll), you need some way to
 smuggle this value across threads.  The usual hammer for this nail is [`atomic-waker`](https://crates.io/crates/atomic-waker), which it will not surprise you to learn is a dependency.
 
-Secondly Drop is surprisingly hard.  In Rust, the Future side can be dropped early.  In which case: a) are you writing to a sound memory location, b) will you `Drop` the right number of times, c) Did you want to run some code on Drop to cancel in-flight tasks, d) Did you want to optimistically poll the cancellation state and how will you smuggle it across, etc.
+Secondly Drop is surprisingly hard.  In Rust, the Future side can be dropped early.  In which case: a) are you writing to a sound memory location, b) will you `Drop` the right number of times regardless of how Dropped or in-the-process-of-being-Dropped the future side is,  c) Did you want to run some code on Drop to cancel in-flight tasks, d) Did you want to optimistically poll the cancellation state and how will you smuggle that across, etc.
 
 Thirdly, executors are surprisingly hard.  It would be *sound* for an executor to keep polling you forever after it has a result, is your implementation sound in that case? Across `Drop` and `!Clone` types?
 
@@ -202,7 +202,8 @@ enum DropState {
     NotCancelled,
 }
 impl<R> Future<R> {
-    /**implementation detail of drop.
+    /**
+    implementation detail of drop.
 
     # Returns
     a value indicating whether, at the time the function ran, the future is dropped before receiving data.
@@ -350,9 +351,9 @@ mod test {
     fn test_continue() {
         let(c,mut f) = continuation();
         let mut f = Pin::new(&mut f);
-        assert!(truntime::poll_once(f.as_mut()).is_pending());
+        assert!(test_executors::poll_once(f.as_mut()).is_pending());
         c.send(23);
-        match truntime::poll_once(f) {
+        match test_executors::poll_once(f) {
             Poll::Ready(23) => {}
             x => panic!("Unexpected result {:?}",x),
         }
