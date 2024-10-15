@@ -1,7 +1,16 @@
 [package]
 name = "continue"
 version = "0.1.0"
+authors = ["Drew Crawford <drew@sealedabstract.com>"]
+
 edition = "2021"
+description = "Swift-style continuation API"
+homepage = "https://sealedabstract.com/code/continue"
+repository = "https://github.com/drewcrawford/continue"
+license = "MIT OR Apache-2.0"
+keywords = ["continuation", "async", "await", "futures", "task"]
+categories = ["asynchronous", "concurrency", "rust-patterns" ]
+exclude = [".*"]
 
 [dependencies]
 atomic-waker = "*"
