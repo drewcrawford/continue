@@ -357,8 +357,11 @@ mod test {
     use std::pin::Pin;
     use std::task::Poll;
     use crate::continuation;
+    #[cfg(target_arch = "wasm32")]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_continue() {
         let(c,mut f) = continuation();
         let mut f = Pin::new(&mut f);
