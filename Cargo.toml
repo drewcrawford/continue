@@ -15,5 +15,21 @@ exclude = [".*"]
 [dependencies]
 atomic-waker = "~1"
 thiserror = "~1"
+
+# really for instrumentation in wasm contexts
+logwise = "0.2.2"
+
 [dev-dependencies]
 test_executors = "~0"
+
+
+[target.'cfg(target_arch="wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+
+[target.'cfg(target_arch="wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.45"
+wasm_thread = "0.3.3"
+
+[patch.crates-io]
+test_executors = {path = "../test_executors"}
