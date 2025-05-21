@@ -87,7 +87,6 @@ Creates a new continuation.
 
 If you need to provide a custom cancel implementation, use [continuation_cancel] instead.
 */
-
 pub fn continuation<R>() -> (Sender<R>,Future<R>) {
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
@@ -102,7 +101,7 @@ Creates a new continuation.  Allows for a custom cancel implementation.
 
 # Parameters
 - `cancellation` - The cancellation implementation to use.  You can use the [crate::FutureCancellation] trait to react to cancel events, or Drop to react to drop events
-(regardless of whether the future is cancelled).
+  (regardless of whether the future is cancelled).
 */
 pub fn continuation_cancel<R,C: FutureCancellation>(cancellation: C) -> (Sender<R>,FutureCancel<R,C>) {
     let shared = Arc::new(Shared {
@@ -388,6 +387,7 @@ mod test {
 
         let mut senders = Vec::new();
         let mut futs = Vec::new();
+        #[allow(dead_code)]
         #[derive(Debug)]
         struct Ex {
             a: u64,
