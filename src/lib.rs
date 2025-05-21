@@ -379,5 +379,40 @@ mod test {
         is_send::<crate::Sender<i32>>();
     }
 
+    #[test_executors::async_test] async fn test_stress() {
+        #[cfg(target_arch = "wasm32")]
+        use wasm_thread as thread;
+        #[cfg(not(target_arch = "wasm32"))]
+        use std::thread as thread;
+
+        let mut senders = Vec::new();
+        let mut futs = Vec::new();
+        #[derive(Debug)]
+        struct Ex {
+            a: u64,
+            b: u64
+        }
+        impl Ex { fn new() -> Ex { Ex { a: 0, b: 0 } }}
+        for _ in 0..1000 {
+            let (s,f) = continuation();
+            senders.push(s);
+            futs.push(f);
+        }
+        let (overall_send,overall_fut) = continuation();
+        thread::spawn(|| {
+            test_executors::spawn_local(async move {
+               for (_f,fut) in futs.drain(..).enumerate() {
+                   let r = fut.await;
+                   println!("{:?}", r);
+               }
+               overall_send.send(());
+            }, "test_stress");
+        });
+        for sender in senders.drain(..) {
+            sender.send(Ex::new());
+        }
+        overall_fut.await;
+    }
+
 
 }
