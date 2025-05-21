@@ -184,7 +184,9 @@ impl<R> Sender<R> {
 
 impl<R> Drop for Sender<R> {
     fn drop(&mut self) {
-        assert!(self.sent, "Sender dropped without sending data");
+        if !std::thread::panicking() {
+            assert!(self.sent, "Sender dropped without sending data");
+        }
     }
 }
 
