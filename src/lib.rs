@@ -153,14 +153,15 @@ impl<R> Sender<R> {
                         u if u == State::Data as u8 || u == State::Gone as u8 => {unreachable!("Continuation already resumed")}
                         u if u == State::FutureHangup as u8 => {
                             //sending to a hungup continuation is a no-op
-                            //however, we did write our data, so we need to drop it.
+                            //however, we did write our data, so we need to drop it and return
                             unsafe {
                                 //safety: We know that the continuation has been resumed, so we can read the data
                                 let data = &mut *self.shared.data.get();
                                 //safety: we know the data was initialized and will never be written to again (only
-                                //written to in empty state.
+                                //written to in empty state).
                                 let _ = data.assume_init_read();
                             }
+                            return;
                         }
                         //sender hangup is impossible
                         _ => unreachable!("Invalid state"),
