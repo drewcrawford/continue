@@ -333,6 +333,14 @@ impl<R,C: FutureCancellation> std::future::Future for FutureCancel<R,C> {
 unsafe impl<R: Send> Send for Future<R> {}
 unsafe impl<R: Send, C: Send + FutureCancellation> Send for FutureCancel<R,C> {}
 unsafe impl <R: Send> Send for Sender<R> {}
+/*
+Implementing this allows us to appear in sync types.
+
+I think this is ok because:
+1.  The main API is a self method, so we don't particularly care about &self situations
+2.  The one &self method is `is_cancelled`, which only acceses the underlying boolean.
+ */
+unsafe impl <R: Sync> Sync for Sender<R> {}
 
 /*Since no clone, no copy
 
