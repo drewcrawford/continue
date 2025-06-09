@@ -3,7 +3,7 @@ name = "continue"
 version = "0.1.0"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
 
-edition = "2021"
+edition = "2024"
 description = "Swift-style continuation API"
 homepage = "https://sealedabstract.com/code/continue"
 repository = "https://github.com/drewcrawford/continue"
