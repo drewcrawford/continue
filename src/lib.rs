@@ -41,18 +41,27 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::task::{Context, Poll};
 
+/// Internal state of a continuation
 #[repr(u8)]
 enum State {
+    /// No data has been sent yet
     Empty,
+    /// Data has been sent and is available
     Data,
+    /// Data has been consumed by the Future
     Gone,
+    /// The Future has been dropped before receiving data
     FutureHangup,
 }
 
+/// Shared state between Sender and Future
 #[derive(Debug)]
 struct Shared<R> {
+    /// The data to be sent, wrapped in UnsafeCell for interior mutability
     data: UnsafeCell<MaybeUninit<R>>,
+    /// The current state of the continuation
     state: AtomicU8,
+    /// Waker to notify the Future when data is available
     waker: atomic_waker::AtomicWaker,
 }
 
@@ -77,7 +86,44 @@ pub struct FutureCancel<R,C: FutureCancellation> {
     cancellation: C,
 }
 
+/// Trait for handling cancellation of a Future.
+/// 
+/// This trait allows you to execute custom logic when a Future is dropped
+/// before it receives its value.
+/// 
+/// # Example
+/// 
+/// ```
+/// use r#continue::{continuation_cancel, FutureCancellation};
+/// use std::sync::{Arc, Mutex};
+/// 
+/// struct CancelHandler {
+///     cancelled: Arc<Mutex<bool>>,
+/// }
+/// 
+/// impl FutureCancellation for CancelHandler {
+///     fn cancel(&mut self) {
+///         *self.cancelled.lock().unwrap() = true;
+///         println!("Future was cancelled!");
+///     }
+/// }
+/// 
+/// let cancelled = Arc::new(Mutex::new(false));
+/// let handler = CancelHandler { cancelled: cancelled.clone() };
+/// 
+/// let (sender, future) = continuation_cancel::<String, _>(handler);
+/// 
+/// // Drop the future without awaiting it
+/// drop(future);
+/// 
+/// // The cancel handler was called
+/// assert!(*cancelled.lock().unwrap());
+/// 
+/// // Sending to a cancelled future is a no-op
+/// sender.send("This won't be received".to_string());
+/// ```
 pub trait FutureCancellation {
+    /// Called when the future is dropped before receiving a value.
     fn cancel(&mut self);
 }
 
@@ -86,6 +132,45 @@ pub trait FutureCancellation {
 Creates a new continuation.
 
 If you need to provide a custom cancel implementation, use [continuation_cancel] instead.
+
+# Examples
+
+Basic usage:
+```
+use r#continue::continuation;
+
+let (sender, future) = continuation::<String>();
+
+// Send data from another thread
+std::thread::spawn(move || {
+    sender.send("Hello from another thread!".to_string());
+});
+
+// Block on the future to get the result
+# test_executors::sleep_on(async {
+let result = future.await;
+assert_eq!(result, "Hello from another thread!");
+# });
+```
+
+Using multiple continuations:
+```
+use r#continue::continuation;
+
+// Create multiple continuations
+let (tx1, rx1) = continuation::<i32>();
+let (tx2, rx2) = continuation::<i32>();
+
+// Send values
+tx1.send(42);
+tx2.send(100);
+
+// Collect results
+# test_executors::sleep_on(async {
+let sum = rx1.await + rx2.await;
+assert_eq!(sum, 142);
+# });
+```
 */
 pub fn continuation<R>() -> (Sender<R>,Future<R>) {
     let shared = Arc::new(Shared {
@@ -97,11 +182,78 @@ pub fn continuation<R>() -> (Sender<R>,Future<R>) {
 }
 
 /**
-Creates a new continuation.  Allows for a custom cancel implementation.
+Creates a new continuation with a custom cancellation handler.
 
 # Parameters
-- `cancellation` - The cancellation implementation to use.  You can use the [crate::FutureCancellation] trait to react to cancel events, or Drop to react to drop events
+- `cancellation` - The cancellation implementation to use. You can use the [FutureCancellation] trait to react to cancel events, or Drop to react to drop events
   (regardless of whether the future is cancelled).
+
+# Examples
+
+```
+use r#continue::{continuation_cancel, FutureCancellation};
+
+struct CleanupHandler {
+    resource_id: u32,
+}
+
+impl FutureCancellation for CleanupHandler {
+    fn cancel(&mut self) {
+        println!("Cleaning up resource {}", self.resource_id);
+        // Perform cleanup operations here
+    }
+}
+
+let handler = CleanupHandler { resource_id: 42 };
+let (sender, future) = continuation_cancel::<String, _>(handler);
+
+// If the future is dropped without receiving data, the handler will be called
+std::thread::spawn(move || {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    sender.send("Data".to_string());
+});
+
+// Drop the future early to trigger cancellation
+drop(future);
+// Output: "Cleaning up resource 42"
+```
+
+# Example with async task cancellation
+
+```no_run
+use r#continue::{continuation_cancel, FutureCancellation};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+struct TaskCanceller {
+    should_stop: Arc<AtomicBool>,
+}
+
+impl FutureCancellation for TaskCanceller {
+    fn cancel(&mut self) {
+        self.should_stop.store(true, Ordering::Relaxed);
+    }
+}
+
+let should_stop = Arc::new(AtomicBool::new(false));
+let canceller = TaskCanceller { should_stop: should_stop.clone() };
+
+let (sender, future) = continuation_cancel::<i32, _>(canceller);
+
+// Start a background task that checks the cancellation flag
+std::thread::spawn(move || {
+    let mut counter = 0;
+    while !should_stop.load(Ordering::Relaxed) {
+        counter += 1;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Task sees cancellation and can clean up
+    println!("Task cancelled after {} iterations", counter);
+});
+
+// Later, drop the future to signal cancellation
+drop(future);
+```
 */
 pub fn continuation_cancel<R,C: FutureCancellation>(cancellation: C) -> (Sender<R>,FutureCancel<R,C>) {
     let shared = Arc::new(Shared {
@@ -125,6 +277,47 @@ impl<R> Sender<R> {
 
     If you have a particularly good way of handling this, you may want to check [Self::is_cancelled] to avoid doing unnecessary work.
     Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
+    
+    # Examples
+    
+    Basic usage:
+    ```
+    use r#continue::continuation;
+    
+    let (sender, future) = continuation::<i32>();
+    
+    // Send a value
+    sender.send(42);
+    
+    # test_executors::sleep_on(async {
+    assert_eq!(future.await, 42);
+    # });
+    ```
+    
+    Sending to a dropped future:
+    ```
+    use r#continue::continuation;
+    
+    let (sender, future) = continuation::<String>();
+    
+    // Drop the future
+    drop(future);
+    
+    // Sending still completes without panic, but the value is discarded
+    sender.send("This won't be received".to_string());
+    ```
+    
+    # Panics
+    
+    It is a programmer error to drop a Sender without calling send:
+    ```should_panic
+    use r#continue::continuation;
+    
+    let (sender, _future) = continuation::<i32>();
+    
+    // This will panic!
+    drop(sender);
+    ```
 */
     pub fn send(mut self, data: R)  {
         self.sent = true;
@@ -175,6 +368,51 @@ impl<R> Sender<R> {
     Determines if the underlying future is cancelled.  And thus, that sending data will have no effect.
 
     Even if this function returns `false`, it is possible that by the time you send data, the future will be cancelled.
+    
+    # Examples
+    
+    ```
+    use r#continue::continuation;
+    
+    let (sender, future) = continuation::<String>();
+    
+    // Initially not cancelled
+    assert!(!sender.is_cancelled());
+    
+    // Drop the future
+    drop(future);
+    
+    // Now the sender reports cancelled
+    assert!(sender.is_cancelled());
+    
+    // Can still send without panic, but it has no effect
+    sender.send("Data".to_string());
+    ```
+    
+    Using is_cancelled to avoid expensive computation:
+    ```
+    use r#continue::continuation;
+    
+    fn expensive_computation() -> String {
+        // Simulate expensive work
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        "Expensive result".to_string()
+    }
+    
+    let (sender, future) = continuation::<String>();
+    
+    // Drop the future
+    drop(future);
+    
+    // Check before doing expensive work
+    if !sender.is_cancelled() {
+        let result = expensive_computation();
+        sender.send(result);
+    } else {
+        println!("Skipping expensive computation - future already cancelled");
+        sender.send("Default".to_string()); // Still need to send to avoid panic
+    }
+    ```
     */
     pub fn is_cancelled(&self) -> bool {
         self.shared.state.load(Ordering::Relaxed) == State::FutureHangup as u8
