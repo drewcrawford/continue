@@ -2,7 +2,7 @@
 /*!
 # continue
 
-![logo](art/logo.png)
+![logo](../../../art/logo.png)
 
 continue is a Rust implementation of a Swift-style continuation API.
 
