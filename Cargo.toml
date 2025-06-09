@@ -14,13 +14,13 @@ exclude = [".*"]
 
 [dependencies]
 atomic-waker = "~1"
-thiserror = "~1"
+thiserror = "~2"
 
 # really for instrumentation in wasm contexts
-logwise = "0.2.2"
+logwise = "0.2"
 
 [dev-dependencies]
-test_executors = "~0"
+test_executors = "0.3"
 
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
