@@ -1,6 +1,6 @@
 //SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{Sender, Future, FutureCancel, FutureCancellation};
+use crate::{Future, FutureCancel, FutureCancellation, Sender};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -18,7 +18,7 @@ impl<R> SyncSender<R> {
     }
 
     /// Sends the data to the remote side.
-    /// 
+    ///
     /// This method takes self to consume the wrapper,
     /// making the Sync implementation safe.
     pub fn send(self, data: R) {
@@ -26,7 +26,7 @@ impl<R> SyncSender<R> {
     }
 
     /// Determines if the underlying future is cancelled.
-    /// 
+    ///
     /// This method takes &mut self to ensure exclusive access,
     /// making the Sync implementation safe.
     pub fn is_cancelled(&mut self) -> bool {

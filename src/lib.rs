@@ -32,9 +32,8 @@ I found myself making too many mistakes, in too many places, and so I've decided
 
 */
 
-
 use std::cell::UnsafeCell;
-use std::fmt::{Debug};
+use std::fmt::Debug;
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -67,7 +66,6 @@ struct Shared<R> {
     waker: atomic_waker::AtomicWaker,
 }
 
-
 /**
 The Sender-side of the continuation.
 
@@ -83,44 +81,44 @@ pub struct Sender<R> {
 The receive side of a continuation, with cancellation support.
 */
 #[derive(Debug)]
-pub struct FutureCancel<R,C: FutureCancellation> {
+pub struct FutureCancel<R, C: FutureCancellation> {
     future: ManuallyDrop<Future<R>>,
     cancellation: C,
 }
 
 /// Trait for handling cancellation of a Future.
-/// 
+///
 /// This trait allows you to execute custom logic when a Future is dropped
 /// before it receives its value.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```
 /// use r#continue::{continuation_cancel, FutureCancellation};
 /// use std::sync::{Arc, Mutex};
-/// 
+///
 /// struct CancelHandler {
 ///     cancelled: Arc<Mutex<bool>>,
 /// }
-/// 
+///
 /// impl FutureCancellation for CancelHandler {
 ///     fn cancel(&mut self) {
 ///         *self.cancelled.lock().unwrap() = true;
 ///         println!("Future was cancelled!");
 ///     }
 /// }
-/// 
+///
 /// let cancelled = Arc::new(Mutex::new(false));
 /// let handler = CancelHandler { cancelled: cancelled.clone() };
-/// 
+///
 /// let (sender, future) = continuation_cancel::<String, _>(handler);
-/// 
+///
 /// // Drop the future without awaiting it
 /// drop(future);
-/// 
+///
 /// // The cancel handler was called
 /// assert!(*cancelled.lock().unwrap());
-/// 
+///
 /// // Sending to a cancelled future is a no-op
 /// sender.send("This won't be received".to_string());
 /// ```
@@ -128,7 +126,6 @@ pub trait FutureCancellation {
     /// Called when the future is dropped before receiving a value.
     fn cancel(&mut self);
 }
-
 
 /**
 Creates a new continuation.
@@ -174,13 +171,19 @@ assert_eq!(sum, 142);
 # });
 ```
 */
-pub fn continuation<R>() -> (Sender<R>,Future<R>) {
+pub fn continuation<R>() -> (Sender<R>, Future<R>) {
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
     });
-    (Sender { shared: shared.clone(), sent: false }, Future { shared })
+    (
+        Sender {
+            shared: shared.clone(),
+            sent: false,
+        },
+        Future { shared },
+    )
 }
 
 /**
@@ -257,71 +260,79 @@ std::thread::spawn(move || {
 drop(future);
 ```
 */
-pub fn continuation_cancel<R,C: FutureCancellation>(cancellation: C) -> (Sender<R>,FutureCancel<R,C>) {
+pub fn continuation_cancel<R, C: FutureCancellation>(
+    cancellation: C,
+) -> (Sender<R>, FutureCancel<R, C>) {
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
     });
-    (Sender { shared: shared.clone(), sent: false }, FutureCancel { future: ManuallyDrop::new(Future { shared }), cancellation })
+    (
+        Sender {
+            shared: shared.clone(),
+            sent: false,
+        },
+        FutureCancel {
+            future: ManuallyDrop::new(Future { shared }),
+            cancellation,
+        },
+    )
 }
-
-
-
 
 impl<R> Sender<R> {
     /**
-    Sends the data to the remote side.
+        Sends the data to the remote side.
 
-    Note that there is no particular guarantee that the remote side will receive this.  For example,
-    the remote side may be dropped already, in which case sending has no effect.  Alternatively, the remote
-    side may become dropped after sending.
+        Note that there is no particular guarantee that the remote side will receive this.  For example,
+        the remote side may be dropped already, in which case sending has no effect.  Alternatively, the remote
+        side may become dropped after sending.
 
-    If you have a particularly good way of handling this, you may want to check [Self::is_cancelled] to avoid doing unnecessary work.
-    Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
-    
-    # Examples
-    
-    Basic usage:
-    ```
-    use r#continue::continuation;
-    
-    let (sender, future) = continuation::<i32>();
-    
-    // Send a value
-    sender.send(42);
-    
-    # test_executors::sleep_on(async {
-    assert_eq!(future.await, 42);
-    # });
-    ```
-    
-    Sending to a dropped future:
-    ```
-    use r#continue::continuation;
-    
-    let (sender, future) = continuation::<String>();
-    
-    // Drop the future
-    drop(future);
-    
-    // Sending still completes without panic, but the value is discarded
-    sender.send("This won't be received".to_string());
-    ```
-    
-    # Panics
-    
-    It is a programmer error to drop a Sender without calling send:
-    ```should_panic
-    use r#continue::continuation;
-    
-    let (sender, _future) = continuation::<i32>();
-    
-    // This will panic!
-    drop(sender);
-    ```
-*/
-    pub fn send(mut self, data: R)  {
+        If you have a particularly good way of handling this, you may want to check [Self::is_cancelled] to avoid doing unnecessary work.
+        Note that this is not perfect either (since the remote side may be dropped after the check but before the send).
+
+        # Examples
+
+        Basic usage:
+        ```
+        use r#continue::continuation;
+
+        let (sender, future) = continuation::<i32>();
+
+        // Send a value
+        sender.send(42);
+
+        # test_executors::sleep_on(async {
+        assert_eq!(future.await, 42);
+        # });
+        ```
+
+        Sending to a dropped future:
+        ```
+        use r#continue::continuation;
+
+        let (sender, future) = continuation::<String>();
+
+        // Drop the future
+        drop(future);
+
+        // Sending still completes without panic, but the value is discarded
+        sender.send("This won't be received".to_string());
+        ```
+
+        # Panics
+
+        It is a programmer error to drop a Sender without calling send:
+        ```should_panic
+        use r#continue::continuation;
+
+        let (sender, _future) = continuation::<i32>();
+
+        // This will panic!
+        drop(sender);
+        ```
+    */
+    pub fn send(mut self, data: R) {
         self.sent = true;
 
         /*
@@ -335,16 +346,23 @@ impl<R> Sender<R> {
             std::ptr::write(opt.as_mut_ptr(), data); //data is moved here!
         }
         loop {
-            let swap = self.shared.state.compare_exchange_weak(State::Empty as u8, State::Data as u8, Ordering::Release, Ordering::Relaxed);
+            let swap = self.shared.state.compare_exchange_weak(
+                State::Empty as u8,
+                State::Data as u8,
+                Ordering::Release,
+                Ordering::Relaxed,
+            );
             match swap {
                 Ok(_) => {
                     self.shared.waker.wake();
-                    return
+                    return;
                 }
                 Err(u) => {
                     match u {
-                        u if u == State::Empty as u8 => {/* spurious, go around again */}
-                        u if u == State::Data as u8 || u == State::Gone as u8 => {unreachable!("Continuation already resumed")}
+                        u if u == State::Empty as u8 => { /* spurious, go around again */ }
+                        u if u == State::Data as u8 || u == State::Gone as u8 => {
+                            unreachable!("Continuation already resumed")
+                        }
                         u if u == State::FutureHangup as u8 => {
                             //sending to a hungup continuation is a no-op
                             //however, we did write our data, so we need to drop it and return
@@ -363,49 +381,48 @@ impl<R> Sender<R> {
                 }
             }
         }
-
     }
 
     /**
     Determines if the underlying future is cancelled.  And thus, that sending data will have no effect.
 
     Even if this function returns `false`, it is possible that by the time you send data, the future will be cancelled.
-    
+
     # Examples
-    
+
     ```
     use r#continue::continuation;
-    
+
     let (sender, future) = continuation::<String>();
-    
+
     // Initially not cancelled
     assert!(!sender.is_cancelled());
-    
+
     // Drop the future
     drop(future);
-    
+
     // Now the sender reports cancelled
     assert!(sender.is_cancelled());
-    
+
     // Can still send without panic, but it has no effect
     sender.send("Data".to_string());
     ```
-    
+
     Using is_cancelled to avoid expensive computation:
     ```
     use r#continue::continuation;
-    
+
     fn expensive_computation() -> String {
         // Simulate expensive work
         std::thread::sleep(std::time::Duration::from_millis(100));
         "Expensive result".to_string()
     }
-    
+
     let (sender, future) = continuation::<String>();
-    
+
     // Drop the future
     drop(future);
-    
+
     // Check before doing expensive work
     if !sender.is_cancelled() {
         let result = expensive_computation();
@@ -419,7 +436,6 @@ impl<R> Sender<R> {
     pub fn is_cancelled(&self) -> bool {
         self.shared.state.load(Ordering::Relaxed) == State::FutureHangup as u8
     }
-
 }
 
 impl<R> Drop for Sender<R> {
@@ -454,11 +470,12 @@ impl<R> Future<R> {
     Note that this is not a guarantee that at any future time – including immediately after this function returns – the data will not be sent.
     */
     fn drop_impl(&mut self) -> DropState {
-        let swap = self.shared.state.swap(State::FutureHangup as u8, Ordering::Acquire);
+        let swap = self
+            .shared
+            .state
+            .swap(State::FutureHangup as u8, Ordering::Acquire);
         match swap {
-            u if u == State::Empty as u8 => {
-                DropState::Cancelled
-            }
+            u if u == State::Empty as u8 => DropState::Cancelled,
             u if u == State::Data as u8 => {
                 //data needs to be dropped here
                 unsafe {
@@ -470,9 +487,7 @@ impl<R> Future<R> {
                 }
                 DropState::NotCancelled
             }
-            u if u == State::Gone as u8 => {
-                DropState::NotCancelled
-            }
+            u if u == State::Gone as u8 => DropState::NotCancelled,
             _ => unreachable!("Invalid state"),
         }
     }
@@ -484,10 +499,10 @@ impl<R> Drop for Future<R> {
     }
 }
 
-impl<R,C: FutureCancellation> Drop for FutureCancel<R,C> {
+impl<R, C: FutureCancellation> Drop for FutureCancel<R, C> {
     fn drop(&mut self) {
         //kill future first
-        let mut future = unsafe{ManuallyDrop::take(&mut self.future)};
+        let mut future = unsafe { ManuallyDrop::take(&mut self.future) };
         match future.drop_impl() {
             DropState::Cancelled => {
                 self.cancellation.cancel();
@@ -506,7 +521,10 @@ enum ReadStatus<R> {
 }
 
 impl<R> Future<R> {
-    fn interpret_result(result: Result<u8, u8>, data: &UnsafeCell<MaybeUninit<R>>) -> ReadStatus<R> {
+    fn interpret_result(
+        result: Result<u8, u8>,
+        data: &UnsafeCell<MaybeUninit<R>>,
+    ) -> ReadStatus<R> {
         match result {
             Ok(..) => {
                 unsafe {
@@ -522,48 +540,58 @@ impl<R> Future<R> {
                     ReadStatus::Data(r)
                 }
             }
-            Err(u) => {
-                match u {
-                    u if u == State::Empty as u8 => { ReadStatus::Waiting }
-                    u if u == State::Data as u8 => { ReadStatus::Spurious }
-                    u if u == State::Gone as u8 => { panic!("Continuation already polled") }
-                    _ => { unreachable!("Invalid state") }
+            Err(u) => match u {
+                u if u == State::Empty as u8 => ReadStatus::Waiting,
+                u if u == State::Data as u8 => ReadStatus::Spurious,
+                u if u == State::Gone as u8 => {
+                    panic!("Continuation already polled")
                 }
-            }
+                _ => {
+                    unreachable!("Invalid state")
+                }
+            },
         }
     }
 }
-
-
 
 impl<R> std::future::Future for Future<R> {
     type Output = R;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         //optimistic read.
-        let state = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
+        let state = self.shared.state.compare_exchange_weak(
+            State::Data as u8,
+            State::Gone as u8,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        );
         match Self::interpret_result(state, &self.shared.data) {
-            ReadStatus::Data(data) => {return Poll::Ready(data)}
+            ReadStatus::Data(data) => return Poll::Ready(data),
             ReadStatus::Waiting | ReadStatus::Spurious => {}
         }
         //register for wakeup
         self.shared.waker.register(cx.waker());
         loop {
-            let state2 = self.shared.state.compare_exchange_weak(State::Data as u8, State::Gone as u8, Ordering::Acquire, Ordering::Relaxed);
+            let state2 = self.shared.state.compare_exchange_weak(
+                State::Data as u8,
+                State::Gone as u8,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            );
             match Self::interpret_result(state2, &self.shared.data) {
-                ReadStatus::Data(data) => {return Poll::Ready(data)}
-                ReadStatus::Waiting => {return Poll::Pending}
-                ReadStatus::Spurious => {continue}
+                ReadStatus::Data(data) => return Poll::Ready(data),
+                ReadStatus::Waiting => return Poll::Pending,
+                ReadStatus::Spurious => continue,
             }
         }
     }
 }
 
-impl<R,C: FutureCancellation> std::future::Future for FutureCancel<R,C> {
+impl<R, C: FutureCancellation> std::future::Future for FutureCancel<R, C> {
     type Output = R;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         //nothing is unpinned here
-       unsafe{self.map_unchecked_mut(|s| &mut s.future as &mut Future<R> )}.poll(cx)
+        unsafe { self.map_unchecked_mut(|s| &mut s.future as &mut Future<R>) }.poll(cx)
     }
 }
 
@@ -571,9 +599,8 @@ impl<R,C: FutureCancellation> std::future::Future for FutureCancel<R,C> {
 
 //I think we don't want clone on either type, because it creates problems for implementing Send.
 unsafe impl<R: Send> Send for Future<R> {}
-unsafe impl<R: Send, C: Send + FutureCancellation> Send for FutureCancel<R,C> {}
-unsafe impl <R: Send> Send for Sender<R> {}
-
+unsafe impl<R: Send, C: Send + FutureCancellation> Send for FutureCancel<R, C> {}
+unsafe impl<R: Send> Send for Sender<R> {}
 
 /*Since no clone, no copy
 
@@ -582,41 +609,40 @@ I think we don't want Eq/Ord/hash because we don't expect multiple instances, si
 Default does not make a lot of sense because we generate types as a pair.
  */
 
-
-
-
 #[cfg(test)]
 mod test {
+    use crate::continuation;
     use std::pin::Pin;
     use std::task::Poll;
-    use crate::continuation;
     #[cfg(target_arch = "wasm32")]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_continue() {
-        let(c,mut f) = continuation();
+        let (c, mut f) = continuation();
         let mut f = Pin::new(&mut f);
         assert!(test_executors::poll_once(f.as_mut()).is_pending());
         c.send(23);
         match test_executors::poll_once(f) {
             Poll::Ready(23) => {}
-            x => panic!("Unexpected result {:?}",x),
+            x => panic!("Unexpected result {:?}", x),
         }
     }
 
-    #[test] fn test_is_send() {
+    #[test]
+    fn test_is_send() {
         fn is_send<T: Send>() {}
         is_send::<crate::Future<i32>>();
         is_send::<crate::Sender<i32>>();
     }
 
-    #[test_executors::async_test] async fn test_stress() {
+    #[test_executors::async_test]
+    async fn test_stress() {
+        #[cfg(not(target_arch = "wasm32"))]
+        use std::thread;
         #[cfg(target_arch = "wasm32")]
         use wasm_thread as thread;
-        #[cfg(not(target_arch = "wasm32"))]
-        use std::thread as thread;
 
         let mut senders = Vec::new();
         let mut futs = Vec::new();
@@ -624,29 +650,34 @@ mod test {
         #[derive(Debug)]
         struct Ex {
             a: u64,
-            b: u64
+            b: u64,
         }
-        impl Ex { fn new() -> Ex { Ex { a: 0, b: 0 } }}
+        impl Ex {
+            fn new() -> Ex {
+                Ex { a: 0, b: 0 }
+            }
+        }
         for _ in 0..1000 {
-            let (s,f) = continuation();
+            let (s, f) = continuation();
             senders.push(s);
             futs.push(f);
         }
-        let (overall_send,overall_fut) = continuation();
+        let (overall_send, overall_fut) = continuation();
         thread::spawn(|| {
-            test_executors::spawn_local(async move {
-               for (_f,fut) in futs.drain(..).enumerate() {
-                   let r = fut.await;
-                   println!("{:?}", r);
-               }
-               overall_send.send(());
-            }, "test_stress");
+            test_executors::spawn_local(
+                async move {
+                    for (_f, fut) in futs.drain(..).enumerate() {
+                        let r = fut.await;
+                        println!("{:?}", r);
+                    }
+                    overall_send.send(());
+                },
+                "test_stress",
+            );
         });
         for sender in senders.drain(..) {
             sender.send(Ex::new());
         }
         overall_fut.await;
     }
-
-
 }

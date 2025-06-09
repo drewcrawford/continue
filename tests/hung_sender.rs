@@ -25,5 +25,6 @@ fn sender_send_returns_on_future_hangup() {
     });
 
     // Wait for up to 1 second for the send to complete. If it times out, the bug is likely not fixed.
-    rx.recv_timeout(Duration::from_secs(1)).expect("sender.send hung, bug may not be fixed");
+    rx.recv_timeout(Duration::from_secs(1))
+        .expect("sender.send hung, bug may not be fixed");
 }
