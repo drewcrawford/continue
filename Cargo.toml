@@ -21,7 +21,8 @@ thiserror = "~2"
 logwise = "0.2"
 
 [dev-dependencies]
-test_executors = "0.3"
+# we use spawn_local from 0.3.3
+test_executors = "0.3.3"
 
 
 [target.'cfg(target_arch="wasm32")'.dependencies]
