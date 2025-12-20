@@ -10,6 +10,10 @@ A continuation is a type of single-use channel.  The sender side of the channel 
 
 A common usecase for the continuation type is when you need to implement a custom Future based on being signaled by an external source when the `Future` is complete.
 
+# Thread Safety
+
+By default, continuation types (`Sender`, `Future`, `FutureCancel`) are `Send` but not `Sync`. If you need to share these types across threads in data structures that require `Sync` (like storing them in an `Arc`), use the thread-safe wrappers provided in the `sync` module.
+
 # For those more familiar with Swift
 
 continue is the answer to how to do [`withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(isolation:function:_:)), [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation), and related APIs when in Rust.
