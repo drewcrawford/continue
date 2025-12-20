@@ -699,18 +699,16 @@ mod test {
             senders.push(s);
             futs.push(f);
         }
-        let (overall_send, overall_fut) = continuation();
+
+        let (overall_send, overall_fut) = continuation::<()>();
         thread::spawn(|| {
-            test_executors::spawn_local(
-                async move {
-                    for (_f, fut) in futs.drain(..).enumerate() {
-                        let r = fut.await;
-                        println!("{:?}", r);
-                    }
-                    overall_send.send(());
-                },
-                "test_stress",
-            );
+            test_executors::sleep_on(async move {
+                for (_f, fut) in futs.drain(..).enumerate() {
+                    let r = fut.await;
+                    println!("{:?}", r);
+                }
+                overall_send.send(());
+            });
         });
         for sender in senders.drain(..) {
             sender.send(Ex::new());

@@ -1,0 +1,11 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+WARN_FLAGS="-D warnings"
+if [[ " $* " =~ " --relaxed " ]]; then
+    WARN_FLAGS=""
+fi
+RUSTDOCFLAGS="$WARN_FLAGS" cargo doc
+

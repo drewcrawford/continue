@@ -1,0 +1,11 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+if [[ " $* " =~ " --relaxed " ]]; then
+    export RELAXED_WARNINGS=1
+fi
+source "$SCRIPT_DIR/_env"
+RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly doc --target=wasm32-unknown-unknown
+
