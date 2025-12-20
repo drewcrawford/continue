@@ -1,8 +1,74 @@
-on: [push]
+# matrix v9
+on: [push,pull_request]
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.os }} ${{ matrix.cwd }} ${{ matrix.channel }} ${{ matrix.target }} ${{ matrix.features }})
+
+    runs-on: ${{matrix.os}}
+
+
+    strategy:
+      matrix:
+        target: [ "native" ]
+        os: [ ubuntu-latest ]
+
+        # only if wasm is needed
+        include:
+          - os: ubuntu-latest
+            target: "wasm32"
+        # other items may be listed here as well
+        # If so, they should be preserved
+
     steps:
       - uses: actions/checkout@v4
-      - run: cargo test
-      - run: cargo doc
+
+      - name: Cache target
+        uses: actions/cache@v4
+        with:
+          key: target-${{ github.event.repository.name }}-${{ matrix.os }}-${{ matrix.target || 'host' }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          path: |
+            target
+          restore-keys: |
+            target-${{ github.event.repository.name }}-${{ matrix.os }}-${{ matrix.target || 'host' }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+            target-${{ github.event.repository.name }}-${{ matrix.os }}-${{ matrix.target || 'host' }}
+
+      #      - name: Github update Rust
+      #        if: runner.os == 'Linux' && !(env.GITEA_ACTIONS == 'true')
+      #        run: |
+      #          # at the moment, GitHub is too far behind mainline rust (v1.89.0-v1.91.0-nightly)
+      #          rustup update
+
+      - name: Install wasm target
+        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
+        run: rustup +nightly target add wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
+        run: cargo +nightly install wasm-bindgen-cli
+
+      - name: Install nightly components
+        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
+        run: |
+          rustup +nightly component add rustfmt clippy
+          rustup +nightly component add rust-src
+
+      - name: rustfmt
+        run: scripts/fmt
+
+      - name: cargo check
+        run: |
+          # we need ssh-add here to load local deps
+          if [[ "$GITEA_ACTIONS" == "true" ]]; then
+            eval `ssh-agent`
+            ssh-add
+          fi
+          scripts/${{ matrix.target }}/check
+
+      - name: clippy
+        run: scripts/${{ matrix.target }}/clippy
+
+      - name: tests
+        run: scripts/${{ matrix.target }}/tests
+
+      - name: docs
+        run: scripts/${{ matrix.target }}/docs
