@@ -40,6 +40,39 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::task::{Context, Poll};
 
+/// Thread-safe wrappers for continuation types.
+///
+/// This module provides `Sync` wrappers around the core continuation types ([`Sender`], [`Future`], [`FutureCancel`]).
+/// While the base types are `Send`, they are not `Sync` by default. These wrappers add `Sync` bounds
+/// by ensuring all operations require exclusive (`&mut self`) access, making them safe to share across threads.
+///
+/// # Types
+///
+/// - [`sync::SyncSender`] - A `Sync` wrapper around [`Sender`]
+/// - [`sync::SyncFuture`] - A `Sync` wrapper around [`Future`]
+/// - [`sync::SyncFutureCancel`] - A `Sync` wrapper around [`FutureCancel`]
+///
+/// # When to use
+///
+/// Use these wrappers when you need to store continuation types in data structures that require `Sync`,
+/// such as when sharing them across multiple threads using `Arc` or similar synchronization primitives.
+///
+/// # Examples
+///
+/// ```
+/// use r#continue::sync::{SyncSender, SyncFuture};
+/// use r#continue::continuation;
+/// use std::sync::Arc;
+///
+/// let (sender, future) = continuation::<i32>();
+/// let sync_sender = SyncSender::new(sender);
+/// let sync_future = SyncFuture::new(future);
+///
+/// // Now these can be shared across threads
+/// let sender_arc = Arc::new(sync_sender);
+/// let future_arc = Arc::new(std::sync::Mutex::new(sync_future));
+/// std::mem::forget(sender_arc);
+/// ```
 pub mod sync;
 
 /// Internal state of a continuation
@@ -225,7 +258,7 @@ drop(future);
 
 # Example with async task cancellation
 
-```no_run
+```
 use r#continue::{continuation_cancel, FutureCancellation};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,7 +277,7 @@ let should_stop = Arc::new(AtomicBool::new(false));
 let canceller = TaskCanceller { should_stop: should_stop.clone() };
 
 let (sender, future) = continuation_cancel::<i32, _>(canceller);
-
+sender.send(0); //avoid crash
 // Start a background task that checks the cancellation flag
 std::thread::spawn(move || {
     let mut counter = 0;
