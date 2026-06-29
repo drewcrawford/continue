@@ -174,16 +174,52 @@ If you need to provide a custom cancel implementation, use [continuation_cancel]
 Basic usage:
 ```
 use r#continue::continuation;
+# #[cfg(not(target_arch = "wasm32"))]
+# use std::thread;
+# #[cfg(target_arch = "wasm32")]
+# use wasm_lite_std as thread;
 
 let (sender, future) = continuation::<String>();
 
 // Send data from another thread
-std::thread::spawn(move || {
+thread::spawn(move || {
     sender.send("Hello from another thread!".to_string());
 });
 
 // Block on the future to get the result
-# test_executors::sleep_on(async {
+# macro_rules! run_async {
+#     ($future:expr) => {{
+#         #[cfg(not(target_arch = "wasm32"))]
+#         {
+#             block_on($future);
+#         }
+#         #[cfg(target_arch = "wasm32")]
+#         {
+#             wasm_lite_std::async_doctest!($future);
+#         }
+#     }};
+# }
+# #[cfg(not(target_arch = "wasm32"))]
+# fn block_on<F: std::future::Future>(future: F) -> F::Output {
+#     use std::pin::pin;
+#     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+#     static VTABLE: RawWakerVTable = RawWakerVTable::new(
+#         |_| RawWaker::new(std::ptr::null(), &VTABLE),
+#         |_| {},
+#         |_| {},
+#         |_| {},
+#     );
+#     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+#     let mut context = Context::from_waker(&waker);
+#     let mut future = pin!(future);
+#     loop {
+#         match future.as_mut().poll(&mut context) {
+#             Poll::Ready(value) => return value,
+#             Poll::Pending => std::thread::yield_now(),
+#         }
+#     }
+# }
+# run_async!(async {
 let result = future.await;
 assert_eq!(result, "Hello from another thread!");
 # });
@@ -202,7 +238,39 @@ tx1.send(42);
 tx2.send(100);
 
 // Collect results
-# test_executors::sleep_on(async {
+# macro_rules! run_async {
+#     ($future:expr) => {{
+#         #[cfg(not(target_arch = "wasm32"))]
+#         {
+#             block_on($future);
+#         }
+#         #[cfg(target_arch = "wasm32")]
+#         {
+#             wasm_lite_std::async_doctest!($future);
+#         }
+#     }};
+# }
+# #[cfg(not(target_arch = "wasm32"))]
+# fn block_on<F: std::future::Future>(future: F) -> F::Output {
+#     use std::pin::pin;
+#     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+#     static VTABLE: RawWakerVTable = RawWakerVTable::new(
+#         |_| RawWaker::new(std::ptr::null(), &VTABLE),
+#         |_| {},
+#         |_| {},
+#         |_| {},
+#     );
+#     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+#     let mut context = Context::from_waker(&waker);
+#     let mut future = pin!(future);
+#     loop {
+#         match future.as_mut().poll(&mut context) {
+#             Poll::Ready(value) => return value,
+#             Poll::Pending => std::thread::yield_now(),
+#         }
+#     }
+# }
+# run_async!(async {
 let sum = rx1.await + rx2.await;
 assert_eq!(sum, 142);
 # });
@@ -234,6 +302,10 @@ Creates a new continuation with a custom cancellation handler.
 
 ```
 use r#continue::{continuation_cancel, FutureCancellation};
+# #[cfg(not(target_arch = "wasm32"))]
+# use std::thread;
+# #[cfg(target_arch = "wasm32")]
+# use wasm_lite_std as thread;
 
 struct CleanupHandler {
     resource_id: u32,
@@ -250,8 +322,8 @@ let handler = CleanupHandler { resource_id: 42 };
 let (sender, future) = continuation_cancel::<String, _>(handler);
 
 // If the future is dropped without receiving data, the handler will be called
-std::thread::spawn(move || {
-    std::thread::sleep(std::time::Duration::from_millis(100));
+thread::spawn(move || {
+    thread::sleep(std::time::Duration::from_millis(100));
     sender.send("Data".to_string());
 });
 
@@ -266,6 +338,10 @@ drop(future);
 use r#continue::{continuation_cancel, FutureCancellation};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+# #[cfg(not(target_arch = "wasm32"))]
+# use std::thread;
+# #[cfg(target_arch = "wasm32")]
+# use wasm_lite_std as thread;
 
 struct TaskCanceller {
     should_stop: Arc<AtomicBool>,
@@ -283,11 +359,11 @@ let canceller = TaskCanceller { should_stop: should_stop.clone() };
 let (sender, future) = continuation_cancel::<i32, _>(canceller);
 sender.send(0); //avoid crash
 // Start a background task that checks the cancellation flag
-std::thread::spawn(move || {
+thread::spawn(move || {
     let mut counter = 0;
     while !should_stop.load(Ordering::Relaxed) {
         counter += 1;
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(std::time::Duration::from_millis(10));
     }
     // Task sees cancellation and can clean up
     println!("Task cancelled after {} iterations", counter);
@@ -339,7 +415,39 @@ impl<R> Sender<R> {
         // Send a value
         sender.send(42);
 
-        # test_executors::sleep_on(async {
+        # macro_rules! run_async {
+        #     ($future:expr) => {{
+        #         #[cfg(not(target_arch = "wasm32"))]
+        #         {
+        #             block_on($future);
+        #         }
+        #         #[cfg(target_arch = "wasm32")]
+        #         {
+        #             wasm_lite_std::async_doctest!($future);
+        #         }
+        #     }};
+        # }
+        # #[cfg(not(target_arch = "wasm32"))]
+        # fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        #     use std::pin::pin;
+        #     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        #     static VTABLE: RawWakerVTable = RawWakerVTable::new(
+        #         |_| RawWaker::new(std::ptr::null(), &VTABLE),
+        #         |_| {},
+        #         |_| {},
+        #         |_| {},
+        #     );
+        #     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        #     let mut context = Context::from_waker(&waker);
+        #     let mut future = pin!(future);
+        #     loop {
+        #         match future.as_mut().poll(&mut context) {
+        #             Poll::Ready(value) => return value,
+        #             Poll::Pending => std::thread::yield_now(),
+        #         }
+        #     }
+        # }
+        # run_async!(async {
         assert_eq!(future.await, 42);
         # });
         ```
@@ -448,10 +556,14 @@ impl<R> Sender<R> {
     Using is_cancelled to avoid expensive computation:
     ```
     use r#continue::continuation;
+    # #[cfg(not(target_arch = "wasm32"))]
+    # use std::thread;
+    # #[cfg(target_arch = "wasm32")]
+    # use wasm_lite_std as thread;
 
     fn expensive_computation() -> String {
         // Simulate expensive work
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        thread::sleep(std::time::Duration::from_millis(100));
         "Expensive result".to_string()
     }
 
@@ -649,38 +761,71 @@ Default does not make a lot of sense because we generate types as a pair.
 #[cfg(test)]
 mod test {
     use crate::continuation;
+    use std::future::Future;
     use std::pin::Pin;
-    use std::task::Poll;
-    #[cfg(target_arch = "wasm32")]
-    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(
+            |_| RawWaker::new(std::ptr::null(), &VTABLE),
+            |_| {},
+            |_| {},
+            |_| {},
+        );
+        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        let mut context = Context::from_waker(&waker);
+        future.poll(&mut context)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn block_on<F: Future>(future: F) -> F::Output {
+        use std::pin::pin;
+
+        let mut future = pin!(future);
+        loop {
+            match poll_once(future.as_mut()) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
-    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
     fn test_continue() {
         let (c, mut f) = continuation();
         let mut f = Pin::new(&mut f);
-        assert!(test_executors::poll_once(f.as_mut()).is_pending());
+        assert!(poll_once(f.as_mut()).is_pending());
         c.send(23);
-        match test_executors::poll_once(f) {
+        match poll_once(f) {
             Poll::Ready(23) => {}
             x => panic!("Unexpected result {:?}", x),
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_lite::wasm_lite_test)]
     fn test_is_send() {
         fn is_send<T: Send>() {}
         is_send::<crate::Future<i32>>();
         is_send::<crate::Sender<i32>>();
     }
 
-    #[test_executors::async_test]
-    async fn test_stress() {
-        #[cfg(not(target_arch = "wasm32"))]
-        use std::thread;
-        #[cfg(target_arch = "wasm32")]
-        use wasm_thread as thread;
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_stress() {
+        block_on(test_stress_body());
+    }
 
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_lite::wasm_lite_test]
+    fn test_stress() {
+        wasm_lite_std::async_doctest!(async {
+            test_stress_body().await;
+        });
+    }
+
+    async fn test_stress_body() {
         let mut senders = Vec::new();
         let mut futs = Vec::new();
         #[allow(dead_code)]
@@ -701,8 +846,19 @@ mod test {
         }
 
         let (overall_send, overall_fut) = continuation::<()>();
-        thread::spawn(|| {
-            test_executors::sleep_on(async move {
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(|| {
+            block_on(async move {
+                for (_f, fut) in futs.drain(..).enumerate() {
+                    let r = fut.await;
+                    println!("{:?}", r);
+                }
+                overall_send.send(());
+            });
+        });
+        #[cfg(target_arch = "wasm32")]
+        wasm_lite_std::spawn(|| {
+            wasm_lite_std::spawn_local(async move {
                 for (_f, fut) in futs.drain(..).enumerate() {
                     let r = fut.await;
                     println!("{:?}", r);

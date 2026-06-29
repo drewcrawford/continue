@@ -17,13 +17,6 @@ rust-version = "1.85.1"
 atomic-waker = "1.1.2"
 thiserror = "2.0.17"
 
-[dev-dependencies]
-# we use spawn_local from 0.3.3
-test_executors = "0.4.1"
-
-
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]
-wasm-bindgen = "0.2.106"
-wasm-bindgen-test = "0.3.56"
-wasm_thread = "0.3.3"
-
+wasm_lite = { path = "../wasm_lite/crates/wasm_lite" }
+wasm_lite_std = { path = "../wasm_lite/crates/wasm_lite_std" }
