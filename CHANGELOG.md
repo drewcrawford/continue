@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Swapped the WASM test toolchain from `wasm-bindgen`/`wasm-bindgen-test`/`wasm_thread` to the `wasm_lite` runner and `wasm_lite_std` helpers
+- Replaced the `test_executors` dev-dependency with small local async test helpers
+- Retuned wasm32 rustflags for the new runner (bulk-memory/mutable-globals features, `__stack_pointer` export, 1GB max memory)
+
 ## [0.1.2] - 2025-12-20
 
 ### Added
