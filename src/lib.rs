@@ -201,21 +201,21 @@ thread::spawn(move || {
 # }
 # #[cfg(not(target_arch = "wasm32"))]
 # fn block_on<F: std::future::Future>(future: F) -> F::Output {
-#     use std::pin::pin;
-#     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-#     static VTABLE: RawWakerVTable = RawWakerVTable::new(
-#         |_| RawWaker::new(std::ptr::null(), &VTABLE),
-#         |_| {},
-#         |_| {},
-#         |_| {},
-#     );
-#     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+#     use std::sync::Arc;
+#     use std::task::{Context, Poll, Wake, Waker};
+#     struct ThreadWaker(std::thread::Thread);
+#     impl Wake for ThreadWaker {
+#         fn wake(self: Arc<Self>) {
+#             self.0.unpark();
+#         }
+#     }
+#     let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
 #     let mut context = Context::from_waker(&waker);
-#     let mut future = pin!(future);
+#     let mut future = std::pin::pin!(future);
 #     loop {
 #         match future.as_mut().poll(&mut context) {
 #             Poll::Ready(value) => return value,
-#             Poll::Pending => std::thread::yield_now(),
+#             Poll::Pending => std::thread::park(),
 #         }
 #     }
 # }
@@ -252,21 +252,21 @@ tx2.send(100);
 # }
 # #[cfg(not(target_arch = "wasm32"))]
 # fn block_on<F: std::future::Future>(future: F) -> F::Output {
-#     use std::pin::pin;
-#     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-#     static VTABLE: RawWakerVTable = RawWakerVTable::new(
-#         |_| RawWaker::new(std::ptr::null(), &VTABLE),
-#         |_| {},
-#         |_| {},
-#         |_| {},
-#     );
-#     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+#     use std::sync::Arc;
+#     use std::task::{Context, Poll, Wake, Waker};
+#     struct ThreadWaker(std::thread::Thread);
+#     impl Wake for ThreadWaker {
+#         fn wake(self: Arc<Self>) {
+#             self.0.unpark();
+#         }
+#     }
+#     let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
 #     let mut context = Context::from_waker(&waker);
-#     let mut future = pin!(future);
+#     let mut future = std::pin::pin!(future);
 #     loop {
 #         match future.as_mut().poll(&mut context) {
 #             Poll::Ready(value) => return value,
-#             Poll::Pending => std::thread::yield_now(),
+#             Poll::Pending => std::thread::park(),
 #         }
 #     }
 # }
@@ -429,21 +429,21 @@ impl<R> Sender<R> {
         # }
         # #[cfg(not(target_arch = "wasm32"))]
         # fn block_on<F: std::future::Future>(future: F) -> F::Output {
-        #     use std::pin::pin;
-        #     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-        #     static VTABLE: RawWakerVTable = RawWakerVTable::new(
-        #         |_| RawWaker::new(std::ptr::null(), &VTABLE),
-        #         |_| {},
-        #         |_| {},
-        #         |_| {},
-        #     );
-        #     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+        #     use std::sync::Arc;
+        #     use std::task::{Context, Poll, Wake, Waker};
+        #     struct ThreadWaker(std::thread::Thread);
+        #     impl Wake for ThreadWaker {
+        #         fn wake(self: Arc<Self>) {
+        #             self.0.unpark();
+        #         }
+        #     }
+        #     let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
         #     let mut context = Context::from_waker(&waker);
-        #     let mut future = pin!(future);
+        #     let mut future = std::pin::pin!(future);
         #     loop {
         #         match future.as_mut().poll(&mut context) {
         #             Poll::Ready(value) => return value,
-        #             Poll::Pending => std::thread::yield_now(),
+        #             Poll::Pending => std::thread::park(),
         #         }
         #     }
         # }
@@ -763,29 +763,33 @@ mod test {
     use crate::continuation;
     use std::future::Future;
     use std::pin::Pin;
-    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+    use std::task::{Context, Poll, Waker};
 
     fn poll_once<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
-        static VTABLE: RawWakerVTable = RawWakerVTable::new(
-            |_| RawWaker::new(std::ptr::null(), &VTABLE),
-            |_| {},
-            |_| {},
-            |_| {},
-        );
-        let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(Waker::noop());
         future.poll(&mut context)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn block_on<F: Future>(future: F) -> F::Output {
         use std::pin::pin;
+        use std::sync::Arc;
+        use std::task::Wake;
 
+        struct ThreadWaker(std::thread::Thread);
+        impl Wake for ThreadWaker {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+
+        let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
         let mut future = pin!(future);
         loop {
-            match poll_once(future.as_mut()) {
+            match future.as_mut().poll(&mut context) {
                 Poll::Ready(value) => return value,
-                Poll::Pending => std::thread::yield_now(),
+                Poll::Pending => std::thread::park(),
             }
         }
     }
@@ -849,7 +853,7 @@ mod test {
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(|| {
             block_on(async move {
-                for (_f, fut) in futs.drain(..).enumerate() {
+                for fut in futs.drain(..) {
                     let r = fut.await;
                     println!("{:?}", r);
                 }
@@ -859,7 +863,7 @@ mod test {
         #[cfg(target_arch = "wasm32")]
         wasm_lite_std::spawn(|| {
             wasm_lite_std::spawn_local(async move {
-                for (_f, fut) in futs.drain(..).enumerate() {
+                for fut in futs.drain(..) {
                     let r = fut.await;
                     println!("{:?}", r);
                 }
