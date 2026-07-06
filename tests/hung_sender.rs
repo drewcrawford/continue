@@ -59,7 +59,8 @@ async fn sender_send_returns_on_future_hangup_wasm() {
         tx.send_sync(()).expect("failed to send completion signal");
     });
 
-    let deadline = Instant::now() + Duration::from_secs(1);
+    // Generous deadline: this must cover worker-thread startup, not just send().
+    let deadline = Instant::now() + Duration::from_secs(5);
     rx.recv_async_timeout(deadline)
         .await
         .expect("sender.send hung, bug may not be fixed");
