@@ -42,10 +42,6 @@ jobs:
         if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
         run: rustup +nightly target add wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-cli
-        if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
-        run: cargo +nightly install wasm-bindgen-cli
-
       - name: Install nightly components
         if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
         run: |
