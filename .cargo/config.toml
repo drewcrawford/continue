@@ -15,5 +15,9 @@ rustflags = [
     "-C", "link-arg=--export=__tls_size",
     "-C", "link-arg=--export=__tls_align",
     "-C", "link-arg=--export=__tls_base",
+    # Newer nightlies no longer export this by default; wasm-bindgen's threading
+    # transform requires it, and without it the test runner fails with
+    # "failed to find `__heap_base` for injecting thread id"
+    "-Clink-arg=--export=__heap_base",
     "-Zunstable-options",
 ]
