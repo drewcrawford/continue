@@ -53,7 +53,7 @@ async fn sender_send_returns_on_future_hangup_wasm() {
     let (sender, future) = continuation::<()>();
     drop(future);
 
-    let (tx, rx) = mpsc::channel();
+    let (tx, mut rx) = mpsc::channel();
     wasm_lite_std::spawn(move || {
         sender.send(());
         tx.send_sync(()).expect("failed to send completion signal");
