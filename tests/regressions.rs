@@ -7,6 +7,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::future::Future as _;
 use std::pin::Pin;
+use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::task::{Context, Poll, Wake, Waker};
@@ -95,5 +96,52 @@ fn sync_cancel_future_does_not_share_non_sync_debug_implementation() {
     assert!(
         results.into_iter().all(|result| result.is_ok()),
         "SyncFutureCancel exposed a non-Sync Debug implementation concurrently"
+    );
+}
+
+struct PanickingCancellation;
+
+impl FutureCancellation for PanickingCancellation {
+    fn cancel(&mut self) {
+        panic!("cancellation handler panic");
+    }
+}
+
+#[test]
+#[ignore = "subprocess helper"]
+fn cancellation_panic_child_process() {
+    if std::env::var_os("CONTINUE_RUN_CANCELLATION_PANIC_CHILD").is_none() {
+        return;
+    }
+
+    let (sender, future) = continuation_cancel::<(), _>(PanickingCancellation);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(future)));
+    sender.send(());
+
+    assert!(
+        result.is_err(),
+        "the cancellation handler should have panicked"
+    );
+}
+
+#[test]
+fn panicking_cancellation_handler_does_not_abort() {
+    let output = Command::new(std::env::current_exe().expect("test executable path"))
+        .args([
+            "--exact",
+            "cancellation_panic_child_process",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("CONTINUE_RUN_CANCELLATION_PANIC_CHILD", "1")
+        .env("RUST_BACKTRACE", "0")
+        .output()
+        .expect("run cancellation panic child process");
+
+    assert!(
+        output.status.success(),
+        "a cancellation-handler panic aborted the child process\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
     );
 }

@@ -637,6 +637,10 @@ impl<R> Future<R> {
                 DropState::NotCancelled
             }
             u if u == State::Gone as u8 => DropState::NotCancelled,
+            u if u == State::FutureHangup as u8 => {
+                // FutureCancel can re-enter this path while unwinding from its callback.
+                DropState::NotCancelled
+            }
             _ => unreachable!("Invalid state"),
         }
     }
