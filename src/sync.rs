@@ -79,9 +79,17 @@ unsafe impl<R: Send> Send for SyncFuture<R> {}
 
 /// A Sync wrapper around FutureCancel that ensures thread-safe access
 /// by requiring &mut self for all operations.
-#[derive(Debug)]
 pub struct SyncFutureCancel<R, C: FutureCancellation> {
     inner: FutureCancel<R, C>,
+}
+
+impl<R, C: FutureCancellation> std::fmt::Debug for SyncFutureCancel<R, C> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Do not expose `C` through `&self`: the wrapper permits `C: Send + !Sync`.
+        formatter
+            .debug_struct("SyncFutureCancel")
+            .finish_non_exhaustive()
+    }
 }
 
 impl<R, C: FutureCancellation> SyncFutureCancel<R, C> {
