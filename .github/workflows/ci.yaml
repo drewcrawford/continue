@@ -1,4 +1,4 @@
-# matrix v9
+# matrix v10
 on: [push,pull_request]
 jobs:
   ci:
@@ -32,15 +32,11 @@ jobs:
             target-${{ github.event.repository.name }}-${{ matrix.os }}-${{ matrix.target || 'host' }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
             target-${{ github.event.repository.name }}-${{ matrix.os }}-${{ matrix.target || 'host' }}
 
-      #      - name: Github update Rust
-      #        if: runner.os == 'Linux' && !(env.GITEA_ACTIONS == 'true')
-      #        run: |
-      #          # at the moment, GitHub is too far behind mainline rust (v1.89.0-v1.91.0-nightly)
-      #          rustup update
-
       - name: Install wasm target
         if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')
-        run: rustup +nightly target add wasm32-unknown-unknown
+        run: |
+                rustup target add wasm32-unknown-unknown
+                rustup +nightly target add wasm32-unknown-unknown
 
       - name: Install nightly components
         if: matrix.target == 'wasm32' && !(env.GITEA_ACTIONS == 'true')

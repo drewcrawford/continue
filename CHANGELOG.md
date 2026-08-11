@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced the `test_executors` dev-dependency with small local async test helpers
 - Retuned wasm32 rustflags for the new runner (bulk-memory/mutable-globals features, `__stack_pointer` export, 1GB max memory)
 
+### Fixed
+- Prevented `SyncFutureCancel`'s `Debug` implementation from exposing a `Send + !Sync` cancellation handler through shared references, closing a safe-code data race
+- Released `FutureCancel`'s shared state and registered waker on drop instead of quietly leaving them behind
+- Made cancellation-handler panics unwind normally instead of triggering a second panic and aborting the process
+
 ## [0.1.2] - 2025-12-20
 
 ### Added
