@@ -640,6 +640,16 @@ impl<R> Future<R> {
             _ => unreachable!("Invalid state"),
         }
     }
+
+    /// Releases the fields of a [`Future`] after [`Self::drop_impl`] has already run.
+    fn drop_after_drop_impl(self) {
+        let mut this = ManuallyDrop::new(self);
+        unsafe {
+            // Safety: `this` will not run `Future::drop`, and `shared` is its only field.
+            // Dropping the field directly releases exactly this Future's Arc ownership.
+            std::ptr::drop_in_place(&mut this.shared);
+        }
+    }
 }
 
 impl<R> Drop for Future<R> {
@@ -658,8 +668,8 @@ impl<R, C: FutureCancellation> Drop for FutureCancel<R, C> {
             }
             DropState::NotCancelled => {}
         }
-        //don't run drop - we already ran drop_impl
-        std::mem::forget(future);
+        // Don't run Future::drop - we already ran drop_impl - but still release its fields.
+        future.drop_after_drop_impl();
     }
 }
 

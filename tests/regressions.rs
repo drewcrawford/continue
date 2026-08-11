@@ -5,8 +5,48 @@ use r#continue::sync::SyncFutureCancel;
 use r#continue::{FutureCancellation, continuation_cancel};
 use std::cell::Cell;
 use std::fmt;
+use std::future::Future as _;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
+use std::task::{Context, Poll, Wake, Waker};
+
+struct NoopCancellation;
+
+impl FutureCancellation for NoopCancellation {
+    fn cancel(&mut self) {}
+}
+
+struct TrackingWaker {
+    _retained: Arc<()>,
+}
+
+#[allow(clippy::manual_noop_waker)] // The retained Arc is the resource this test tracks.
+impl Wake for TrackingWaker {
+    fn wake(self: Arc<Self>) {}
+}
+
+#[test]
+fn dropping_cancel_future_releases_registered_waker() {
+    let retained_by_waker = Arc::new(());
+    let waker = Waker::from(Arc::new(TrackingWaker {
+        _retained: Arc::clone(&retained_by_waker),
+    }));
+    let (sender, mut future) = continuation_cancel::<(), _>(NoopCancellation);
+
+    let mut context = Context::from_waker(&waker);
+    assert_eq!(Pin::new(&mut future).poll(&mut context), Poll::Pending);
+    drop(waker);
+
+    drop(future);
+    sender.send(());
+
+    assert_eq!(
+        Arc::strong_count(&retained_by_waker),
+        1,
+        "dropping FutureCancel must release Shared and its registered waker"
+    );
+}
 
 struct ConcurrentDebugCancellation {
     rendezvous: Arc<Barrier>,
