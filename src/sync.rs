@@ -20,6 +20,23 @@
 //!
 //! [`SyncFutureCancel`] additionally keeps its cancellation handler `C` out of its
 //! `Debug` output, since `C` is only required to be `Send`.
+//!
+//! # Examples
+//!
+//! ```
+//! use r#continue::sync::{SyncSender, SyncFuture};
+//! use r#continue::continuation;
+//! use std::sync::Arc;
+//!
+//! let (sender, future) = continuation::<i32>();
+//! let sync_sender = SyncSender::new(sender);
+//! let sync_future = SyncFuture::new(future);
+//!
+//! // Now these can be shared across threads
+//! let sender_arc = Arc::new(sync_sender);
+//! let future_arc = Arc::new(std::sync::Mutex::new(sync_future));
+//! std::mem::forget(sender_arc);
+//! ```
 
 use crate::{Future, FutureCancel, FutureCancellation, Sender};
 use std::pin::Pin;

@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-14
+
+Three soundness fixes around cancellable continuations, plus a new home for the WASM test toolchain.
+
 ### Changed
 - Swapped the WASM test toolchain from `wasm-bindgen`/`wasm-bindgen-test`/`wasm_thread` to the `wasm_lite` runner and `wasm_lite_std` helpers
+- `wasm_lite` and `wasm_lite_std` now come from crates.io rather than a sibling checkout, so the repo builds without any neighbors present. The test runner is the published `wasm_lite_cli` binary (`cargo install wasm_lite_cli`)
 - Replaced the `test_executors` dev-dependency with small local async test helpers
-- Retuned wasm32 rustflags for the new runner (bulk-memory/mutable-globals features, `__stack_pointer` export, 1GB max memory)
+- Retuned wasm32 rustflags for the new runner (bulk-memory/mutable-globals features, `__stack_pointer` and `__heap_base` exports, 1GB max memory)
+- `Debug for SyncFutureCancel` no longer asks for `R: Debug` or `C: Debug`—it never printed either one, and now it doesn't pretend to need them
+- The `sync` module finally explains itself: a module header on why the wrappers restore `Sync` by narrowing access rather than by locking, and what that costs you
 
 ### Fixed
 - Prevented `SyncFutureCancel`'s `Debug` implementation from exposing a `Send + !Sync` cancellation handler through shared references, closing a safe-code data race
@@ -51,6 +58,7 @@ Initial release of `continue`, bringing Swift's elegant continuation API to Rust
 - Safe future dropping at any time
 - No data races thanks to atomic state transitions
 
-[Unreleased]: https://github.com/drewcrawford/continue/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/drewcrawford/continue/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/drewcrawford/continue/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/drewcrawford/continue/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/drewcrawford/continue/releases/tag/v0.1.1
