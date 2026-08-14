@@ -15,7 +15,7 @@ This is a Rust library (edition 2024, requires rustc 1.85.1+) implementing a Swi
 
 ### WebAssembly Testing
 - `./scripts/wasm32/tests` - Run WASM tests via the `wasm_lite` runner
-  - Uses nightly Rust with the runner from the sibling checkout `../wasm_lite` (build it first with `cargo build` in that repo)
+  - Uses nightly Rust and the `wasm_lite` binary on `PATH` (`cargo install wasm_lite_cli`)
   - Enables atomics, bulk-memory, and mutable-globals features
   - Rebuilds std with `-Z build-std` (see `.cargo/config.toml`)
 - `./scripts/wasm32/check`, `./scripts/wasm32/clippy`, `./scripts/wasm32/docs` - Other wasm32 CI checks
@@ -53,5 +53,5 @@ Key design principles:
 ## Testing Notes
 
 - Async tests are driven by small local helpers in `src/lib.rs`'s test module (`poll_once` with `Waker::noop()`, a parking `block_on`)
-- WASM tests use `wasm_lite_std` (path dev-dependency on the sibling `../wasm_lite` checkout) for threads, channels, and `async_doctest!`, with `#[wasm_lite::wasm_lite_test]` as the test attribute
+- WASM tests use `wasm_lite_std` (a wasm32-only dev-dependency from crates.io) for threads, channels, and `async_doctest!`, with `#[wasm_lite::wasm_lite_test]` as the test attribute
 - Tests conditionally compile for WASM via `#[cfg(target_arch = "wasm32")]`

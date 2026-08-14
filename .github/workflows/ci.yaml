@@ -1,10 +1,17 @@
-# matrix v10
+# matrix v11
 on: [push,pull_request]
 jobs:
   ci:
     name: Build (${{ matrix.os }} ${{ matrix.cwd }} ${{ matrix.channel }} ${{ matrix.target }} ${{ matrix.features }})
 
     runs-on: ${{matrix.os}}
+
+    # A job that wedges rather than fails otherwise runs until the forge's
+    # default cap, which is hours: it holds a runner the whole time and reports
+    # nothing. Fail it fast instead. Raise it in the project that needs it — a
+    # suite whose honest runtime approaches this should get a longer limit here
+    # rather than a template that accommodates the slowest repo.
+    timeout-minutes: 15
 
 
     strategy:
@@ -43,6 +50,11 @@ jobs:
         run: |
           rustup +nightly component add rustfmt clippy
           rustup +nightly component add rust-src
+
+      # scripts/wasm32/tests drives the browser through `wasm_lite run`.
+      - name: Install wasm_lite runner
+        if: matrix.target == 'wasm32'
+        run: cargo install wasm_lite_cli
 
       - name: rustfmt
         run: scripts/fmt

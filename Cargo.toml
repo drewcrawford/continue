@@ -17,13 +17,5 @@ rust-version = "1.85.1"
 atomic-waker = "1.1.2"
 
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]
-wasm_lite = { path = "../wasm_lite/crates/wasm_lite" }
-wasm_lite_std = { path = "../wasm_lite/crates/wasm_lite_std" }
-
-# Dev-cycle self-patch (NEEDS_REVIEW §32): the published test_executors expands
-# #[async_test] to #[wasm_bindgen_test], so the wasm32 test target does not
-# compile here without this.
-[patch.crates-io]
-test_executors = { path = "../test_executors" }
-logwise = { path = "../logwise" }
-some_executor = { path = "../some_executor" }
+wasm_lite = "0.1.0"
+wasm_lite_std = "0.1.0"
