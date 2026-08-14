@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! `Sync` wrappers for the continuation types.
+//!
+//! [`Sender`], [`Future`], and [`FutureCancel`] are `Send` but not `Sync`: each
+//! one owns the single-consumer end of a continuation, and handing out shared
+//! references to it would let two threads race on the same slot. That rules them
+//! out of places that demand `Sync`, such as a bare `Arc`.
+//!
+//! The wrappers here — [`SyncSender`], [`SyncFuture`], and [`SyncFutureCancel`] —
+//! restore `Sync` by narrowing the API instead of adding a lock. Every operation
+//! that reaches the inner value either consumes `self` ([`SyncSender::send`]) or
+//! takes `&mut self` ([`SyncSender::is_cancelled`], and `poll` on both futures).
+//! A shared `&` reference therefore exposes nothing that can observe or mutate the
+//! continuation, which is what makes the `unsafe impl Sync` on each wrapper sound.
+//!
+//! The narrowing is real: because `&self` gives no access, sharing one of these
+//! across threads still means arranging exclusive access yourself, typically an
+//! `Arc<Mutex<_>>`. The wrappers buy you the `Sync` bound, not concurrent use.
+//!
+//! [`SyncFutureCancel`] additionally keeps its cancellation handler `C` out of its
+//! `Debug` output, since `C` is only required to be `Send`.
+
 use crate::{Future, FutureCancel, FutureCancellation, Sender};
 use std::pin::Pin;
 use std::task::{Context, Poll};
