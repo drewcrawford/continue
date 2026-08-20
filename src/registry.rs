@@ -46,6 +46,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use wasm_lite_std::time::Instant;
 
+/// How many entries the registry keeps when `CONTINUE_REGISTRY_CAPACITY` is unset.
 pub const DEFAULT_CAPACITY: usize = 1024;
 
 /// What happened to a continuation.
@@ -65,6 +66,8 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// The stable wire name reported by `snapshot`. Kebab-case, and matched by
+    /// external tooling, so it is not a `Debug` rendering.
     pub const fn name(self) -> &'static str {
         match self {
             Outcome::Outstanding => "outstanding",
@@ -75,6 +78,7 @@ impl Outcome {
     }
 }
 
+/// One recorded continuation.
 #[derive(Clone, Debug)]
 pub struct Entry {
     /// A locally minted id, always distinct. What `--id` selects.
@@ -85,8 +89,12 @@ pub struct Entry {
     /// Where `continuation()` was called, captured with `#[track_caller]` so no
     /// call site had to change to become debuggable.
     pub created_at_file: &'static str,
+    /// Line within that file.
     pub created_at_line: u32,
+    /// When it was created. Age is the point: a continuation outstanding for
+    /// 30 seconds in a program whose operations take milliseconds *is* the bug.
     pub created: Instant,
+    /// What became of it, if anything yet.
     pub outcome: Outcome,
     /// Whether the future has been polled at least once. An unpolled
     /// outstanding continuation means nobody is even waiting yet, which is a
@@ -190,15 +198,25 @@ pub(crate) fn record_outcome(seq: u64, outcome: Outcome) {
     });
 }
 
+/// Counts covering the whole registry, including what it has forgotten.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RegistryStats {
+    /// Total ever recorded, including entries since forgotten.
     pub created: u64,
+    /// How many were forgotten to stay within `capacity`. Non-zero means the
+    /// snapshot is not the whole history -- which is the difference between
+    /// "nothing is stuck" and "I lost it".
     pub dropped: u64,
+    /// How many are held right now.
     pub retained: usize,
+    /// How many of the retained are still waiting. This is the number to look
+    /// at first.
     pub outstanding: usize,
+    /// The bound currently in force.
     pub capacity: usize,
 }
 
+/// Reads the registry counters without copying out the entries.
 pub fn stats() -> RegistryStats {
     let (retained, outstanding, capacity) = with(|registry| {
         (
