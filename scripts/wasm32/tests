@@ -8,3 +8,7 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 source "$SCRIPT_DIR/_env"
 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm_lite run" RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly test --target=wasm32-unknown-unknown
+# Again with the registry on. It was unbuildable until Metropolis/continue#4 --
+# `exfiltrate` depended back on this crate -- so nothing here had ever compiled
+# it for wasm32, let alone run it.
+CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER="wasm_lite run" RUSTFLAGS="$WASM32_RUSTFLAGS" RUSTDOCFLAGS="$WASM32_RUSTDOCFLAGS" cargo +nightly test --target=wasm32-unknown-unknown --features exfiltrate

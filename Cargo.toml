@@ -25,7 +25,7 @@ logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git
 # Both optional and both pulled in only by the `exfiltrate` feature, so the
 # default dependency graph of this crate is unchanged. `wasm_lite_std` is here
 # for its `Instant`, which works on wasm32 where `std::time::Instant` does not.
-exfiltrate = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/exfiltrate.git", rev = "3200c140f628ddc69c051fd751baf4bbd313fa07", optional = true }
+exfiltrate = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/exfiltrate.git", rev = "dfbbdbe6f003643557fe2d1b0c5fb97083bdc11c", optional = true }
 wasm_lite_std = { version = "0.1.4", optional = true }
 
 [features]
@@ -43,7 +43,7 @@ rmp-serde = "1.3.1"
 # Not target-gated: `#[wasm_lite_test]` registers a libtest `#[test]` off
 # wasm32, so one attribute covers both targets.
 wasm_lite = "0.1.4"
-exfiltrate_internal = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/exfiltrate.git", rev = "3200c140f628ddc69c051fd751baf4bbd313fa07" }
+exfiltrate_internal = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/exfiltrate.git", rev = "dfbbdbe6f003643557fe2d1b0c5fb97083bdc11c" }
 wasm_lite_std = "0.1.4"
 
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]

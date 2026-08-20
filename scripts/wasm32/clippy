@@ -8,3 +8,4 @@ if [[ " $* " =~ " --relaxed " ]]; then
 fi
 source "$SCRIPT_DIR/_env"
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly clippy --target=wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly clippy --target=wasm32-unknown-unknown --features exfiltrate
