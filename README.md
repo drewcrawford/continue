@@ -11,8 +11,12 @@ handler, a JS promise on wasm — calls `send` exactly once. The `Future`
 resolves with that value wherever you `.await` it. That's the whole job:
 turning "someone will call me back later" into a well-behaved `Future`.
 
-```rust
+```
 use r#continue::continuation;
+# #[cfg(not(target_arch = "wasm32"))]
+# use std::thread;
+# #[cfg(target_arch = "wasm32")]
+# use wasm_lite_std as thread;
 
 let (sender, future) = continuation();
 
@@ -22,7 +26,41 @@ thread::spawn(move || {
 });
 
 // ...and await it like any other future.
+# macro_rules! run_async {
+#     ($future:expr) => {{
+#         #[cfg(not(target_arch = "wasm32"))]
+#         {
+#             block_on($future);
+#         }
+#         #[cfg(target_arch = "wasm32")]
+#         {
+#             wasm_lite_std::async_doctest!($future);
+#         }
+#     }};
+# }
+# #[cfg(not(target_arch = "wasm32"))]
+# fn block_on<F: std::future::Future>(future: F) -> F::Output {
+#     use std::sync::Arc;
+#     use std::task::{Context, Poll, Wake, Waker};
+#     struct ThreadWaker(std::thread::Thread);
+#     impl Wake for ThreadWaker {
+#         fn wake(self: Arc<Self>) {
+#             self.0.unpark();
+#         }
+#     }
+#     let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+#     let mut context = Context::from_waker(&waker);
+#     let mut future = std::pin::pin!(future);
+#     loop {
+#         match future.as_mut().poll(&mut context) {
+#             Poll::Ready(value) => return value,
+#             Poll::Pending => std::thread::park(),
+#         }
+#     }
+# }
+# run_async!(async {
 assert_eq!(future.await, "Hello from another thread!");
+# });
 ```
 
 (The crate is named after a keyword, so in source it's `r#continue`.)
@@ -47,11 +85,12 @@ The API is small because the rules are strict:
 
 # Thread safety
 
-By default the types (`Sender`, `Future`, `FutureCancel`) are `Send` but not
-`Sync`. If you need to park them somewhere that requires `Sync` — say, inside
-an `Arc`ed struct — the `sync` module provides `SyncSender`, `SyncFuture`,
-and `SyncFutureCancel` wrappers that add the bound by requiring `&mut self`
-access.
+By default the types (`Sender`, `Future`, `FutureCancel`) are `Send`
+but not `Sync`. If you need to park them somewhere that requires `Sync` —
+say, inside an `Arc`ed struct — the `sync` module provides
+[`SyncSender`](sync::SyncSender), [`SyncFuture`](sync::SyncFuture), and
+[`SyncFutureCancel`](sync::SyncFutureCancel) wrappers that add the bound by
+requiring `&mut self` access.
 
 # For those more familiar with Swift
 
@@ -81,9 +120,9 @@ some code on Drop to cancel in-flight tasks, d) did you want to
 optimistically poll the cancellation state, and how will you smuggle that
 across, etc.
 
-Thirdly, executors are surprisingly hard. It would be *sound* for an executor
-to keep polling you forever after it has a result — is your implementation
-sound in that case? Across `Drop` and `!Clone` types?
+Thirdly, executors are surprisingly hard. It would be *sound* for an
+executor to keep polling you forever after it has a result — is your
+implementation sound in that case? Across `Drop` and `!Clone` types?
 
 I found myself making too many mistakes, in too many places, and so I've
 decided to make them all in one place: right here!
@@ -156,15 +195,15 @@ replacing its parent.
 Two opt-in features build on this (both off by default; the default build
 stays a lightweight primitive):
 
-* **`logwise-forensic`** compiles stable completion, resume, and cancellation
-  events for diagnosing hangs. There is no runtime dependency: without a
-  dispatcher, tokens and instrumentation are no-ops.
-* **`exfiltrate`** maintains a bounded registry of outstanding continuations,
-  queryable from outside the process via
+* **`logwise-forensic`** compiles stable completion, resume, and
+  cancellation events for diagnosing hangs. There is no runtime dependency:
+  without a dispatcher, tokens and instrumentation are no-ops.
+* **`exfiltrate`** maintains a bounded registry of outstanding
+  continuations, queryable from outside the process via
   [`exfiltrate`](https://sealedabstract.com/code/)'s `snapshot` command. A
-  continuation is a future waiting for something *outside* Rust to signal it;
-  when that signal never comes, the program hangs with no stack to look at.
-  The registry reports each continuation's creation site and age — and a
+  continuation is a future waiting for something *outside* Rust to signal
+  it; when that signal never comes, the program hangs with no stack to look
+  at. The registry reports each continuation's creation site and age — and a
   continuation outstanding for 30 seconds in a program whose operations take
   milliseconds *is* the bug.
 
