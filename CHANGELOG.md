@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Continuations now preserve their creator/awaiter as causal parent across threads and wasm workers, while recording the completion site as a link instead of borrowing its context. The optional `logwise-forensic` profile adds stable completion, resume, and cancellation events for hang diagnosis; the default path depends only on the zero-dependency facade and remains a no-op without a dispatcher.
+
 ## [0.1.3] - 2026-08-14
 
 Three soundness fixes around cancellable continuations, plus a new home for the WASM test toolchain.

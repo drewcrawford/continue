@@ -2,6 +2,9 @@
 # Tell *Cargo* to rebuild these crates for non-host targets (needs nightly)
 build-std = ["std", "panic_abort"]
 
+[net]
+git-fetch-with-cli = true
+
 [target.'cfg(target_arch="wasm32")']
 runner = ["wasm_lite", "run"]
 

@@ -16,6 +16,19 @@ A common usecase for the continuation type is when you need to implement a custo
 
 By default, continuation types ([`Sender`], [`Future`], [`FutureCancel`]) are `Send` but not `Sync`. If you need to share these types across threads in data structures that require `Sync` (like storing them in an `Arc`), use the thread-safe wrappers provided in the [`sync`] module.
 
+# Observability context
+
+A continuation owns a small `logwise` context token whose parent is the context
+active when the continuation is created. Polling, completion, and cancellation
+enter that token only for the duration of their own work, then restore the
+caller's thread or worker context. A completion performed elsewhere links the
+completion-site context to the continuation instead of replacing its parent.
+
+The `logwise-forensic` feature compiles stable completion, resume, and
+cancellation events for diagnosing hangs. It is off by default. There is no
+runtime dependency: without a dispatcher, tokens and instrumentation are
+no-ops.
+
 # For those more familiar with Swift
 
 continue is the answer to how to do [`withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(isolation:function:_:)), [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation), and related APIs when in Rust.
@@ -68,6 +81,8 @@ struct Shared<R> {
     state: AtomicU8,
     /// Waker to notify the Future when data is available
     waker: atomic_waker::AtomicWaker,
+    /// Durable causal identity created beneath the creator/awaiter context.
+    continuation_context: logwise::ContextToken,
 }
 
 /**
@@ -244,10 +259,13 @@ assert_eq!(sum, 142);
 ```
 */
 pub fn continuation<R>() -> (Sender<R>, Future<R>) {
+    let continuation_context =
+        logwise::context::child(logwise::context::capture(), "continue.continuation");
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
+        continuation_context,
     });
     (
         Sender {
@@ -343,10 +361,13 @@ drop(future);
 pub fn continuation_cancel<R, C: FutureCancellation>(
     cancellation: C,
 ) -> (Sender<R>, FutureCancel<R, C>) {
+    let continuation_context =
+        logwise::context::child(logwise::context::capture(), "continue.continuation");
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
+        continuation_context,
     });
     (
         Sender {
@@ -447,6 +468,8 @@ impl<R> Sender<R> {
     pub fn send(mut self, data: R) {
         self.sent = true;
 
+        let completion_context = logwise::context::capture();
+
         /*
         Safety: Data can only be written by this type. Since the type is unclonable, we're
         the only possible writer.
@@ -466,6 +489,16 @@ impl<R> Sender<R> {
             );
             match swap {
                 Ok(_) => {
+                    if !completion_context.is_none() {
+                        logwise::context::link(
+                            self.shared.continuation_context,
+                            completion_context,
+                        );
+                    }
+                    let _continuation_context =
+                        logwise::context::enter(self.shared.continuation_context);
+                    #[cfg(feature = "logwise-forensic")]
+                    logwise::forensic!("continue.continuation.completed");
                     self.shared.waker.wake();
                     return;
                 }
@@ -586,12 +619,17 @@ impl<R> Future<R> {
     Note that this is not a guarantee that at any future time – including immediately after this function returns – the data will not be sent.
     */
     fn drop_impl(&mut self) -> DropState {
+        let _continuation_context = logwise::context::enter(self.shared.continuation_context);
         let swap = self
             .shared
             .state
             .swap(State::FutureHangup as u8, Ordering::Acquire);
         match swap {
-            u if u == State::Empty as u8 => DropState::Cancelled,
+            u if u == State::Empty as u8 => {
+                #[cfg(feature = "logwise-forensic")]
+                logwise::forensic!("continue.continuation.cancelled");
+                DropState::Cancelled
+            }
             u if u == State::Data as u8 => {
                 //data needs to be dropped here
                 unsafe {
@@ -687,6 +725,7 @@ impl<R> Future<R> {
 impl<R> std::future::Future for Future<R> {
     type Output = R;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let _continuation_context = logwise::context::enter(self.shared.continuation_context);
         //optimistic read.
         let state = self.shared.state.compare_exchange_weak(
             State::Data as u8,
@@ -695,7 +734,11 @@ impl<R> std::future::Future for Future<R> {
             Ordering::Relaxed,
         );
         match Self::interpret_result(state, &self.shared.data) {
-            ReadStatus::Data(data) => return Poll::Ready(data),
+            ReadStatus::Data(data) => {
+                #[cfg(feature = "logwise-forensic")]
+                logwise::forensic!("continue.continuation.resumed");
+                return Poll::Ready(data);
+            }
             ReadStatus::Waiting | ReadStatus::Spurious => {}
         }
         //register for wakeup
@@ -708,7 +751,11 @@ impl<R> std::future::Future for Future<R> {
                 Ordering::Relaxed,
             );
             match Self::interpret_result(state2, &self.shared.data) {
-                ReadStatus::Data(data) => return Poll::Ready(data),
+                ReadStatus::Data(data) => {
+                    #[cfg(feature = "logwise-forensic")]
+                    logwise::forensic!("continue.continuation.resumed");
+                    return Poll::Ready(data);
+                }
                 ReadStatus::Waiting => return Poll::Pending,
                 ReadStatus::Spurious => continue,
             }

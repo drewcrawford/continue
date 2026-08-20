@@ -11,10 +11,15 @@ license = "MIT OR Apache-2.0"
 keywords = ["continuation", "async", "await", "futures", "task"]
 categories = ["asynchronous", "concurrency", "rust-patterns" ]
 exclude = [".*"]
-rust-version = "1.85.1"
+rust-version = "1.95.0"
 
 [dependencies]
 atomic-waker = "1.1.2"
+logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git", rev = "a5fe8cafdaff294ca1d553ece3f3a8bdec0d30f3" }
+
+[features]
+default = []
+logwise-forensic = []
 
 [target.'cfg(target_arch="wasm32")'.dev-dependencies]
 wasm_lite = "0.1.0"
