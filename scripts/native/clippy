@@ -7,5 +7,8 @@ WARN_FLAGS="-D warnings"
 if [[ " $* " =~ " --relaxed " ]]; then
     WARN_FLAGS=""
 fi
-RUSTFLAGS="$WARN_FLAGS" cargo clippy
+# Second pass with the feature on: the registry and its provider are not
+# built at all otherwise.
+RUSTFLAGS="$WARN_FLAGS" cargo clippy --all-targets
+RUSTFLAGS="$WARN_FLAGS" cargo clippy --all-targets --features exfiltrate
 

@@ -59,6 +59,11 @@ use std::task::{Context, Poll};
 
 pub mod sync;
 
+#[cfg(feature = "exfiltrate")]
+pub mod exfiltrate_provider;
+#[cfg(feature = "exfiltrate")]
+pub mod registry;
+
 /// Internal state of a continuation
 #[repr(u8)]
 enum State {
@@ -83,6 +88,9 @@ struct Shared<R> {
     waker: atomic_waker::AtomicWaker,
     /// Durable causal identity created beneath the creator/awaiter context.
     continuation_context: logwise::ContextToken,
+    /// This continuation's row in the debug registry. See `registry`.
+    #[cfg(feature = "exfiltrate")]
+    registry_id: u64,
 }
 
 /**
@@ -258,14 +266,24 @@ assert_eq!(sum, 142);
 # });
 ```
 */
+#[cfg_attr(feature = "exfiltrate", track_caller)]
 pub fn continuation<R>() -> (Sender<R>, Future<R>) {
     let continuation_context =
         logwise::context::child(logwise::context::capture(), "continue.continuation");
+    // Recorded before the shared state is built, so the id it hands back can
+    // live in it: the id is how every later transition finds its row.
+    #[cfg(feature = "exfiltrate")]
+    let registry_id = registry::record_created(
+        continuation_context.into_parts().0,
+        std::panic::Location::caller(),
+    );
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
         continuation_context,
+        #[cfg(feature = "exfiltrate")]
+        registry_id,
     });
     (
         Sender {
@@ -363,11 +381,20 @@ pub fn continuation_cancel<R, C: FutureCancellation>(
 ) -> (Sender<R>, FutureCancel<R, C>) {
     let continuation_context =
         logwise::context::child(logwise::context::capture(), "continue.continuation");
+    // Recorded before the shared state is built, so the id it hands back can
+    // live in it: the id is how every later transition finds its row.
+    #[cfg(feature = "exfiltrate")]
+    let registry_id = registry::record_created(
+        continuation_context.into_parts().0,
+        std::panic::Location::caller(),
+    );
     let shared = Arc::new(Shared {
         data: UnsafeCell::new(MaybeUninit::uninit()),
         state: AtomicU8::new(State::Empty as u8),
         waker: atomic_waker::AtomicWaker::new(),
         continuation_context,
+        #[cfg(feature = "exfiltrate")]
+        registry_id,
     });
     (
         Sender {
@@ -589,6 +616,17 @@ impl<R> Sender<R> {
 
 impl<R> Drop for Sender<R> {
     fn drop(&mut self) {
+        #[cfg(feature = "exfiltrate")]
+        if !self.sent {
+            // Recorded *before* the assert. Dropping a sender unsent is defined
+            // as a programmer error here, and it otherwise shows up only as a
+            // hang somewhere else entirely -- so the record is the useful part
+            // even when the panic follows.
+            registry::record_outcome(
+                self.shared.registry_id,
+                registry::Outcome::SenderDroppedUnsent,
+            );
+        }
         if !std::thread::panicking() {
             assert!(self.sent, "Sender dropped without sending data");
         }
@@ -620,6 +658,8 @@ impl<R> Future<R> {
     */
     fn drop_impl(&mut self) -> DropState {
         let _continuation_context = logwise::context::enter(self.shared.continuation_context);
+        #[cfg(feature = "exfiltrate")]
+        registry::record_outcome(self.shared.registry_id, registry::Outcome::FutureHungUp);
         let swap = self
             .shared
             .state
@@ -726,6 +766,8 @@ impl<R> std::future::Future for Future<R> {
     type Output = R;
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let _continuation_context = logwise::context::enter(self.shared.continuation_context);
+        #[cfg(feature = "exfiltrate")]
+        registry::record_polled(self.shared.registry_id);
         //optimistic read.
         let state = self.shared.state.compare_exchange_weak(
             State::Data as u8,
@@ -737,6 +779,8 @@ impl<R> std::future::Future for Future<R> {
             ReadStatus::Data(data) => {
                 #[cfg(feature = "logwise-forensic")]
                 logwise::forensic!("continue.continuation.resumed");
+                #[cfg(feature = "exfiltrate")]
+                registry::record_outcome(self.shared.registry_id, registry::Outcome::Sent);
                 return Poll::Ready(data);
             }
             ReadStatus::Waiting | ReadStatus::Spurious => {}

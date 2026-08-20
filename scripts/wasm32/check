@@ -7,5 +7,8 @@ if [[ " $* " =~ " --relaxed " ]]; then
     export RELAXED_WARNINGS=1
 fi
 source "$SCRIPT_DIR/_env"
+# Second pass with the feature on: the registry and its provider are not
+# built at all otherwise.
 RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly check --target=wasm32-unknown-unknown
+RUSTFLAGS="$WASM32_RUSTFLAGS" cargo +nightly check --target=wasm32-unknown-unknown --features exfiltrate
 
