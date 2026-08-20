@@ -15,7 +15,13 @@ rust-version = "1.95.0"
 
 [dependencies]
 atomic-waker = "1.1.2"
-logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git", rev = "a5fe8cafdaff294ca1d553ece3f3a8bdec0d30f3" }
+# Temporary pre-release pin for the coordinated breaking migration. This must
+# name the *same* revision as every other crate that can share a graph with
+# this one -- `some_executor`, `test_executors`, `async_file`, `wasm_lite_std`,
+# `some_executor_tokio` all pin 1be396f. Two git revisions of the facade are
+# two crates to cargo, so a mismatch puts two install-once dispatch globals in
+# one process and silently makes one of them inert.
+logwise = { git = "ssh://gitea@gitea.mermaid-gecko.ts.net/Metropolis/logwise.git", rev = "1be396ff30588ad32453596bbaa45afb568368f7" }
 
 [features]
 default = []
