@@ -12,6 +12,8 @@ use crate::registry;
 /// Registers the `continuations` subsystem. Idempotent.
 ///
 /// ```no_run
+/// # // no_run because: `begin` opens exfiltrate's listening socket and installs
+/// # // process-global state, which a doctest process must not do.
 /// exfiltrate::begin();
 /// r#continue::exfiltrate_provider::install();
 /// ```

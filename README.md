@@ -14,6 +14,19 @@ A common usecase for the continuation type is when you need to implement a custo
 
 By default, continuation types (`Sender`, `Future`, `FutureCancel`) are `Send` but not `Sync`. If you need to share these types across threads in data structures that require `Sync` (like storing them in an `Arc`), use the thread-safe wrappers provided in the `sync` module.
 
+# Observability context
+
+A continuation owns a small `logwise` context token whose parent is the context
+active when the continuation is created. Polling, completion, and cancellation
+enter that token only for the duration of their own work, then restore the
+caller's thread or worker context. A completion performed elsewhere links the
+completion-site context to the continuation instead of replacing its parent.
+
+The `logwise-forensic` feature compiles stable completion, resume, and
+cancellation events for diagnosing hangs. It is off by default. There is no
+runtime dependency: without a dispatcher, tokens and instrumentation are
+no-ops.
+
 # For those more familiar with Swift
 
 continue is the answer to how to do [`withCheckedContinuation`](https://developer.apple.com/documentation/swift/withcheckedcontinuation(isolation:function:_:)), [`CheckedContinuation`](https://developer.apple.com/documentation/swift/checkedcontinuation), and related APIs when in Rust.

@@ -1,6 +1,6 @@
 [package]
 name = "continue"
-version = "0.1.3"
+version = "0.1.4"
 authors = ["Drew Crawford <drew@sealedabstract.com>"]
 
 edition = "2024"
